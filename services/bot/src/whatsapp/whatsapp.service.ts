@@ -55,6 +55,8 @@ export class WhatsAppBroadcaster {
         auth: state,
         browser: Browsers.windows('Desktop'),
         printQRInTerminal: false,
+        syncFullHistory: false, // Prevents init query timeouts
+        defaultQueryTimeoutMs: 60000,
       });
 
       this.socket.ev.on('creds.update', saveCreds);
@@ -115,20 +117,24 @@ export class WhatsAppBroadcaster {
       const groupList = Object.values(groups);
 
       for (const group of groupList) {
-        // Find existing record to preserve user choice
+        const isChannel = group.id.endsWith('@newsletter');
         const existing = await prisma.whatsAppGroup.findUnique({ where: { jid: group.id } });
         if (!existing) {
           await prisma.whatsAppGroup.create({
             data: {
               jid: group.id,
               name: group.subject,
+              isChannel: isChannel,
               isActive: false, // DISABLED BY DEFAULT
             },
           });
         } else {
           await prisma.whatsAppGroup.update({
             where: { jid: group.id },
-            data: { name: group.subject },
+            data: { 
+              name: group.subject,
+              isChannel: isChannel,
+            },
           });
         }
       }
@@ -147,11 +153,17 @@ export class WhatsAppBroadcaster {
               await prisma.whatsAppGroup.create({
                 data: {
                   jid: channelJid,
-                  name: `📢 ${channelName} (Official Channel)`,
+                  name: `📢 ${channelName}`,
+                  isChannel: true,
                   isActive: false, // DISABLED BY DEFAULT
                 },
               });
               logger.info({ channelJid, channelName }, '✅ Official WhatsApp Channel synced to database');
+            } else {
+              await prisma.whatsAppGroup.update({
+                where: { jid: channelJid },
+                data: { isChannel: true },
+              });
             }
           }
         }
@@ -159,128 +171,139 @@ export class WhatsAppBroadcaster {
         logger.info({ info: channelErr.message }, 'WhatsApp Channel invite query note');
       }
 
-      logger.info({ groupCount: groupList.length }, '✅ Synced WhatsApp groups & channels to database (All disabled by default)');
+      const totalCount = await prisma.whatsAppGroup.count();
+      const channelCount = await prisma.whatsAppGroup.count({ where: { isChannel: true } });
+      const groupCount = await prisma.whatsAppGroup.count({ where: { isChannel: false } });
+
+      logger.info({ totalCount, groupCount, channelCount }, '✅ Synced WhatsApp groups & channels to database (All disabled by default)');
     } catch (err: any) {
-      logger.warn({ error: err.message }, 'Could not automatically fetch WhatsApp groups');
+      logger.warn({ error: err.message }, 'Could not fetch participating groups');
     }
   }
 
   /**
-   * Enqueues a job message to be broadcasted to active WhatsApp groups and channels
+   * Schedules a broadcast for an approved job across all active groups and channels
    */
-  enqueueBroadcast(jobId: string, messageText: string, city?: string, category?: string) {
+  async broadcastJob(jobId: string, messageText: string, city?: string, category?: string): Promise<void> {
+    logger.info({ jobId }, 'Queueing approved job for WhatsApp broadcast...');
     this.queue.push({ jobId, messageText, city, category });
-    logger.info({ jobId, queueSize: this.queue.length }, 'Job added to WhatsApp broadcast queue');
     this.processQueue();
   }
 
   /**
-   * Safe queue processor with human typing simulation and 8-20s randomized intervals
+   * Broadcasts directly to all active channels and groups with humanized jitter delays
    */
-  private async processQueue() {
+  private async processQueue(): Promise<void> {
     if (this.isProcessingQueue || this.queue.length === 0) return;
     this.isProcessingQueue = true;
 
     while (this.queue.length > 0) {
       const item = this.queue.shift();
-      if (!item) continue;
+      if (!item) break;
 
       try {
-        // Fetch only enabled/active groups from database
-        const activeGroups = await prisma.whatsAppGroup.findMany({
-          where: { isActive: true },
+        // Find all active groups / channels matching city or category filters
+        const targetGroups = await prisma.whatsAppGroup.findMany({
+          where: {
+            isActive: true,
+            OR: [
+              { cityFilter: null },
+              { cityFilter: { equals: item.city || '', mode: 'insensitive' } },
+            ],
+          },
         });
 
-        if (activeGroups.length === 0) {
-          logger.warn({ jobId: item.jobId }, 'No active WhatsApp groups selected in database.');
+        if (targetGroups.length === 0) {
+          logger.info(
+            { jobId: item.jobId },
+            'No active WhatsApp groups or channels enabled. Broadcast skipped safely.'
+          );
           continue;
         }
 
-        for (const group of activeGroups) {
-          if (group.cityFilter && item.city && !item.city.toLowerCase().includes(group.cityFilter.toLowerCase())) {
-            continue;
-          }
+        logger.info(
+          { count: targetGroups.length, jobId: item.jobId },
+          'Starting sequential broadcast to active WhatsApp targets...'
+        );
 
-          try {
-            // 1. Simulate human presence: "typing..." for 1.5 - 3.5 seconds (skip for newsletters)
-            if (this.socket && this.isConnected && !group.jid.endsWith('@newsletter')) {
-              await this.socket.sendPresenceUpdate('composing', group.jid);
-              const typingDelay = Math.floor(Math.random() * 2000) + 1500;
-              await new Promise((r) => setTimeout(r, typingDelay));
-              await this.socket.sendPresenceUpdate('paused', group.jid);
-            }
-
-            // 2. Dispatch message
-            await this.sendMessageToDestination(group.jid, item.messageText);
-
-            // 3. Record log
-            await prisma.broadcastLog.create({
-              data: {
-                jobId: item.jobId,
-                groupId: group.id,
-                status: 'SUCCESS',
-              },
-            });
-
-            logger.info({ destinationName: group.name, jid: group.jid, jobId: item.jobId }, 'Broadcasted job to WhatsApp');
-          } catch (err: any) {
-            logger.error({ destinationName: group.name, error: err.message }, 'Failed sending to WhatsApp destination');
-
-            await prisma.broadcastLog.create({
-              data: {
-                jobId: item.jobId,
-                groupId: group.id,
-                status: 'FAILED',
-                error: err.message,
-              },
-            });
-          }
-
-          // 4. Safe randomized interval (8 to 20 seconds)
-          const randomWaitSeconds =
-            Math.floor(Math.random() * (this.maxDelaySeconds - this.minDelaySeconds + 1)) +
-            this.minDelaySeconds;
-
-          logger.info({ waitSeconds: randomWaitSeconds }, 'Applying anti-ban pause before next broadcast...');
-          await new Promise((resolve) => setTimeout(resolve, randomWaitSeconds * 1000));
+        for (const target of targetGroups) {
+          await this.sendWithRetry(target.jid, item.messageText, item.jobId, target.id);
+          
+          // Anti-ban random delay
+          const delaySec = Math.floor(Math.random() * (this.maxDelaySeconds - this.minDelaySeconds + 1)) + this.minDelaySeconds;
+          logger.info({ delaySec, nextTarget: target.name }, 'Throttling broadcast between targets (anti-ban protection)...');
+          await new Promise((resolve) => setTimeout(resolve, delaySec * 1000));
         }
       } catch (err: any) {
-        logger.error({ error: err.message }, 'Error in WhatsApp queue execution');
+        logger.error({ error: err.message, jobId: item.jobId }, 'Error processing broadcast queue item');
       }
     }
 
     this.isProcessingQueue = false;
   }
 
-  /**
-   * Dispatches message to group JID (@g.us) or Channel / Newsletter JID (@newsletter)
-   */
-  private async sendMessageToDestination(jid: string, text: string): Promise<void> {
-    if (this.provider === 'evolution') {
-      const apiUrl = process.env.WHATSAPP_EVOLUTION_API_URL;
-      const apiKey = process.env.WHATSAPP_EVOLUTION_API_KEY;
-      const instance = process.env.WHATSAPP_EVOLUTION_INSTANCE_NAME || 'ksajobs-bot';
+  private async sendWithRetry(
+    jid: string,
+    text: string,
+    jobId: string,
+    groupId: string,
+    retries = 2
+  ): Promise<boolean> {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        if (this.provider === 'baileys') {
+          if (!this.socket || !this.isConnected) {
+            throw new Error('Baileys socket is not connected');
+          }
+          await this.socket.sendMessage(jid, { text });
+        } else {
+          // Evolution API fallback
+          const evoUrl = process.env.EVOLUTION_API_URL;
+          const evoKey = process.env.EVOLUTION_API_KEY;
+          const instance = process.env.EVOLUTION_INSTANCE_NAME || 'ksajobs';
 
-      if (!apiUrl) throw new Error('WHATSAPP_EVOLUTION_API_URL is required for Evolution API mode');
+          if (!evoUrl || !evoKey) {
+            throw new Error('Evolution API credentials missing');
+          }
 
-      await axios.post(
-        `${apiUrl}/message/sendText/${instance}`,
-        {
-          number: jid,
-          options: { delay: 1200, presence: 'composing', linkPreview: true },
-          textMessage: { text },
-        },
-        {
-          headers: { apikey: apiKey || '' },
+          await axios.post(
+            `${evoUrl}/message/sendText/${instance}`,
+            {
+              number: jid,
+              textMessage: { text },
+              options: { delay: 1200, presence: 'composing' },
+            },
+            { headers: { apikey: evoKey } }
+          );
         }
-      );
-      return;
-    }
 
-    if (!this.socket || !this.isConnected) {
-      throw new Error('WhatsApp client is not connected');
-    }
+        logger.info({ jid, jobId, attempt }, 'Successfully delivered broadcast message to WhatsApp target');
 
-    await this.socket.sendMessage(jid, { text });
+        // Log broadcast to database
+        await prisma.broadcastLog.create({
+          data: {
+            jobId,
+            groupId,
+            status: 'SENT',
+          },
+        });
+
+        return true;
+      } catch (err: any) {
+        logger.warn({ error: err.message, jid, attempt }, 'Broadcast delivery failed, retrying...');
+        if (attempt === retries) {
+          await prisma.broadcastLog.create({
+            data: {
+              jobId,
+              groupId,
+              status: 'FAILED',
+              errorMessage: err.message,
+            },
+          });
+        }
+        await new Promise((r) => setTimeout(r, 3000));
+      }
+    }
+    return false;
   }
 }

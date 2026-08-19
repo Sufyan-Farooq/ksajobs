@@ -7,7 +7,7 @@ export class LinkedInScraper extends BaseScraper {
   readonly platform: SourcePlatform = 'linkedin';
 
   /**
-   * Scrapes verified Saudi Arabia LinkedIn listings with FULL detail page extraction
+   * Scrapes verified Saudi Arabia LinkedIn listings with resilient full detail extraction
    */
   async scrape(maxJobs: number = 10): Promise<RawScrapedJob[]> {
     const jobs: RawScrapedJob[] = [];
@@ -26,20 +26,19 @@ export class LinkedInScraper extends BaseScraper {
         ],
       });
 
-      // Index Context
-      const indexContext = await browser.newContext({
+      const context = await browser.newContext({
         userAgent:
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
         viewport: { width: 1280, height: 800 },
         locale: 'en-US',
       });
-      await indexContext.addInitScript(() => {
+      await context.addInitScript(() => {
         delete (Object.getPrototypeOf(navigator) as any).webdriver;
       });
 
-      const page = await indexContext.newPage();
+      const page = await context.newPage();
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 35000 });
-      await page.waitForTimeout(3500);
+      await page.waitForTimeout(3000);
 
       const scrapedCards = await page.evaluate(() => {
         const cards = document.querySelectorAll('.base-card, .job-search-card');
@@ -61,7 +60,6 @@ export class LinkedInScraper extends BaseScraper {
           .filter((j) => j.title && j.href);
       });
 
-      await indexContext.close();
       logger.info({ count: scrapedCards.length }, 'Found LinkedIn listing cards on page');
 
       for (const card of scrapedCards) {
@@ -71,74 +69,68 @@ export class LinkedInScraper extends BaseScraper {
 
         if (jobs.some((j) => j.sourceUrl === cleanUrl)) continue;
 
+        let pageTitle = card.title;
+        let company = card.company || 'Saudi Enterprise';
+        let location = card.location || 'Saudi Arabia';
+        let fullDescription = `${card.title} at ${company} in ${location}. Candidates must currently be based in Saudi Arabia with valid transferable Iqama or Saudi national.`;
+
         try {
-          // Open detail page with fresh stealth context to extract full description
-          const detailCtx = await browser.newContext({
-            userAgent:
-              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-            locale: 'en-US',
-          });
-          await detailCtx.addInitScript(() => {
-            delete (Object.getPrototypeOf(navigator) as any).webdriver;
-          });
+          // Navigate existing page to detail URL safely
+          await page.goto(cleanUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+          await page.waitForTimeout(1800);
 
-          const detailPage = await detailCtx.newPage();
-          await detailPage.goto(cleanUrl, { waitUntil: 'domcontentloaded', timeout: 25000 });
-          await detailPage.waitForTimeout(3500);
-
-          const fullHtml = await detailPage.content();
-          await detailCtx.close();
-
+          const fullHtml = await page.content();
           const $detail = cheerio.load(fullHtml);
           $detail('script, style, header, footer, nav, iframe').remove();
 
-          const pageTitle = $detail('h1').text().trim() || card.title;
-          const company = this.cleanText($detail('.topcard__flavor--black-link, .topcard__flavor').first().text()) || card.company || 'Saudi Enterprise';
-          
-          let location = card.location || 'Saudi Arabia';
+          const detailTitle = $detail('h1').text().trim();
+          if (detailTitle) pageTitle = detailTitle;
+
+          const detailCompany = this.cleanText($detail('.topcard__flavor--black-link, .topcard__flavor').first().text());
+          if (detailCompany) company = detailCompany;
+
           const topLocation = this.cleanText($detail('.top-card-layout__first-subline .topcard__flavor:nth-child(2)').text());
           if (topLocation) {
             location = topLocation.includes('Saudi') ? topLocation : `${topLocation}, Saudi Arabia`;
           }
 
-          // Extract full rich job description
           const descEl = $detail('.show-more-less-html__markup, .description__text, section.show-more-less-html');
           descEl.find('br').replaceWith('\n');
           descEl.find('p, div, li').each((_, el) => {
             $detail(el).append('\n');
           });
 
-          let fullDescription = descEl.text()
+          const extractedText = descEl.text()
             .split('\n')
             .map((l) => l.trim())
             .filter(Boolean)
             .join('\n');
 
-          if (!fullDescription || fullDescription.length < 30) {
-            fullDescription = `${pageTitle} at ${company} in ${location}. Candidates must currently be based in Saudi Arabia with valid transferable Iqama or Saudi national.`;
+          if (extractedText && extractedText.length > 50) {
+            fullDescription = extractedText;
           }
-
-          jobs.push({
-            sourcePlatform: 'linkedin',
-            sourceUrl: cleanUrl,
-            title: pageTitle,
-            companyName: company,
-            locationRaw: location,
-            descriptionRaw: fullDescription,
-            applyUrl: cleanUrl,
-            postedDateRaw: card.time,
-          });
-
-          await this.sleep(300, 600);
         } catch (detailErr: any) {
-          logger.warn({ error: detailErr.message, url: cleanUrl }, 'Could not load LinkedIn detail page');
+          logger.info({ url: cleanUrl }, 'Using fallback listing card details for LinkedIn post');
         }
+
+        jobs.push({
+          sourcePlatform: 'linkedin',
+          sourceUrl: cleanUrl,
+          title: pageTitle,
+          companyName: company,
+          locationRaw: location,
+          descriptionRaw: fullDescription,
+          applyUrl: cleanUrl,
+          postedDateRaw: card.time,
+        });
+
+        await this.sleep(1000, 2000);
       }
     } catch (err: any) {
       logger.error({ error: err.message }, 'Error scraping LinkedIn KSA');
     } finally {
       if (browser) {
-        await browser.close();
+        await browser.close().catch(() => {});
       }
     }
 

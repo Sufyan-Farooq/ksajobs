@@ -20,7 +20,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { id, action, jid, name, cityFilter } = body;
+    const { id, action, jid, name, cityFilter, isChannel, targetType, enableState } = body;
 
     if (action === 'toggle' && id) {
       const group = await prisma.whatsAppGroup.findUnique({ where: { id } });
@@ -33,12 +33,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(updated);
     }
 
+    if (action === 'bulk_toggle' && targetType !== undefined && enableState !== undefined) {
+      const isTargetChannel = targetType === 'channel';
+      await prisma.whatsAppGroup.updateMany({
+        where: { isChannel: isTargetChannel },
+        data: { isActive: Boolean(enableState) },
+      });
+      return NextResponse.json({ success: true });
+    }
+
     if (action === 'add' && jid && name) {
+      const determinedIsChannel = isChannel !== undefined ? Boolean(isChannel) : jid.includes('@newsletter');
       const created = await prisma.whatsAppGroup.create({
         data: {
           jid,
           name,
           cityFilter: cityFilter || null,
+          isChannel: determinedIsChannel,
           isActive: true,
         },
       });

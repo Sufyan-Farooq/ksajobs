@@ -58,8 +58,10 @@ model Job {
   
   // Engagement
   viewsCount            Int           @default(0)
-  clicksCount           Int           @default(0)
+  applicationsCount     Int           @default(0)
   
+  // Timestamps
+  scrapedAt             DateTime      @default(now())
   createdAt             DateTime      @default(now())
   updatedAt             DateTime      @updatedAt
   expiresAt             DateTime?
@@ -102,6 +104,7 @@ model WhatsAppGroup {
   id             String         @id @default(cuid())
   name           String
   jid            String         @unique
+  isChannel      Boolean        @default(false)
   cityFilter     String?
   categoryFilter String?
   isActive       Boolean        @default(false) // Disabled by default!
@@ -127,8 +130,9 @@ model ScraperRunLog {
   platform       String
   jobsFound      Int            @default(0)
   jobsInserted   Int            @default(0)
-  jobsDuplicates Int            @default(0)
-  errors         String?
+  jobsDuplicate  Int            @default(0)
+  status         String         @default("COMPLETED") // COMPLETED, FAILED
+  errorMessage   String?
   startedAt      DateTime       @default(now())
   completedAt    DateTime?
 }
