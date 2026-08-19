@@ -20,24 +20,27 @@ export function buildJobApprovalEmbed(jobId: string, parsed: ParsedJobData, raw:
       ? `${parsed.salaryMin.toLocaleString()} - ${parsed.salaryMax.toLocaleString()} SAR`
       : 'Not Specified';
 
+  const fullWhatsAppText = parsed.whatsappMessageText || '';
+
+  // Use Description for the full WhatsApp post (Discord allows up to 4096 chars in Description)
   const embed = new EmbedBuilder()
     .setTitle(`📋 [PENDING REVIEW] ${parsed.titleEn || raw.title}`)
     .setURL(raw.applyUrl)
     .setColor(color)
-    .addFields(
-      { name: '🏢 Company', value: parsed.companyName || raw.companyName, inline: true },
-      { name: '📍 City / Location', value: `${parsed.cityAr} (${parsed.cityEn})`, inline: true },
-      { name: '🇸🇦 Saudization Status', value: parsed.saudizationLabelAr || parsed.saudization, inline: true },
-      { name: '💼 Work Type / Category', value: `${parsed.workType} • ${parsed.category}`, inline: true },
-      { name: '💰 Salary', value: salaryDisplay, inline: true },
-      { name: '🌐 Source Platform', value: `\`${raw.sourcePlatform.toUpperCase()}\``, inline: true },
-      {
-        name: '📱 WhatsApp Message Preview (To be sent on approval)',
-        value: `\`\`\`text\n${parsed.whatsappMessageText.slice(0, 1000)}\n\`\`\``,
-        inline: false,
-      }
+    .setDescription(
+      fullWhatsAppText.length > 4000
+        ? `${fullWhatsAppText.slice(0, 3950)}\n\n*(...Message truncated at 4,000 characters for Discord)*`
+        : fullWhatsAppText
     )
-    .setFooter({ text: `Job ID: ${jobId} • Scraped via KSAJobs Bot` })
+    .addFields(
+      { name: '🏢 Company', value: parsed.companyName || raw.companyName || 'N/A', inline: true },
+      { name: '📍 Location', value: `${parsed.cityAr || ''} (${parsed.cityEn || 'Saudi Arabia'})`, inline: true },
+      { name: '🇸🇦 Saudization', value: parsed.saudizationLabelAr || parsed.saudization || 'Open', inline: true },
+      { name: '💼 Work Type / Sector', value: `${parsed.workType} • ${parsed.category}`, inline: true },
+      { name: '💰 Salary', value: salaryDisplay, inline: true },
+      { name: '🌐 Source Platform', value: `\`${raw.sourcePlatform.toUpperCase()}\``, inline: true }
+    )
+    .setFooter({ text: `Job ID: ${jobId} • KSA Jobs Moderation Bot` })
     .setTimestamp();
 
   if (raw.companyLogo) {
@@ -50,10 +53,6 @@ export function buildJobApprovalEmbed(jobId: string, parsed: ParsedJobData, raw:
       .setCustomId(`approve_job:${jobId}`)
       .setLabel('✅ Approve & Broadcast')
       .setStyle(ButtonStyle.Success),
-    new ButtonBuilder()
-      .setCustomId(`edit_job:${jobId}`)
-      .setLabel('✏️ Quick Edit')
-      .setStyle(ButtonStyle.Primary),
     new ButtonBuilder()
       .setCustomId(`reject_job:${jobId}`)
       .setLabel('❌ Reject')
