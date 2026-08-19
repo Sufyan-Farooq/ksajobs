@@ -57,8 +57,8 @@ Generate strict JSON:
   "experienceYearsMin": number or null,
   "experienceYearsMax": number or null,
   "educationLevel": "Bachelor / Diploma / High School / etc.",
-  "category": "General / Engineering / IT / Sales / Healthcare / Logistics",
-  "categoryAr": "عام / هندسة / تقنية المعلومات / مبيعات / رعاية صحية / لوجستيات",
+  "category": "General / Engineering / IT / Sales / Healthcare / Logistics / Hospitality",
+  "categoryAr": "عام / هندسة / تقنية المعلومات / مبيعات / رعاية صحية / لوجستيات / ضيافة",
   "descriptionFormatted": "The organized English post description (translated from Arabic if original was Arabic)",
   "requirements": ["Exact requirement 1 in English", "Exact requirement 2 in English"],
   "benefits": ["Benefit 1 in English"],
@@ -113,7 +113,7 @@ Generate strict JSON:
         whatsappMessageText: parsed.whatsappMessageText || this.generateDefaultWhatsAppText(rawJob, parsed, contactEmail, contactPhone, cleanedRawDescription),
       };
     } catch (err: any) {
-      logger.warn({ error: err.message }, 'Gemini note, using authentic fallback translation formatter');
+      // Quiet fallback on rate limits or API hiccups
       return this.heuristicFallback({ ...rawJob, descriptionRaw: cleanedRawDescription });
     }
   }
@@ -121,6 +121,12 @@ Generate strict JSON:
   private cleanWebsiteNoise(text: string): string {
     if (!text) return '';
     const noisePatterns = [
+      /\(function\(\)\s*\{[\s\S]*?\}\)\(\);?/g,
+      /var\s+\w+\s*=[\s\S]*?;/g,
+      /\(adsbygoogle\s*=[\s\S]*?\);?/g,
+      /document\.getElementById[\s\S]*?;/g,
+      /Finding Residential Apartment Rentals[\s\S]*?For Deals/gi,
+      /Browsing Local s For Deals/gi,
       /Tanqeeb\.com\s*is the pioneering search engine[\s\S]*?post your job openings on Tanqeeb\./gi,
       /Join Tanqeeb today and explore[\s\S]*?post your job openings on Tanqeeb\./gi,
       /Tanqeeb\.com\s*is the pioneering search engine/gi,
@@ -143,6 +149,8 @@ Generate strict JSON:
       /Home Subscribe/gi,
       /expatriates\.com/gi,
       /Posting ID:\s*\d+/gi,
+      /Page View Count:\s*\d+/gi,
+      /NEVER PAY ANY KIND OF FEE WHEN APPLYING FOR A JOB\./gi,
     ];
 
     let cleaned = text;
@@ -163,6 +171,18 @@ Generate strict JSON:
 
     let out = text;
     const dictionary: [RegExp, string][] = [
+      [/قهوجي/g, 'Hospitality Coffee Server (Qahwaji)'],
+      [/نحتاج قهوجي/g, 'We need a Hospitality Coffee Server (Qahwaji)'],
+      [/مقدم قهوة/g, 'Coffee Server'],
+      [/سائق شاحنة/g, 'Truck Driver'],
+      [/سائقين شاحنات/g, 'Truck Drivers'],
+      [/كهربائي شاحنات/g, 'Truck Auto Electrician'],
+      [/كهربائي/g, 'Electrician'],
+      [/ميكانيكي ديزل/g, 'Diesel Mechanic'],
+      [/ميكانيكي/g, 'Mechanic'],
+      [/عامل بوفيه/g, 'Cafeteria / Buffet Helper'],
+      [/عامل نظافة/g, 'Cleaner / Helper'],
+      [/نقل كفالة/g, 'Transfer of Sponsorship'],
       [/وظيفة قيم ماستر \(Game Master\) - مشرف الالعاب في مركز كيوز الترفيهي/g, 'Game Master - Games Supervisor at Quez Entertainment Center'],
       [/وظيفة/g, 'Job / Position:'],
       [/قيم ماستر/g, 'Game Master'],
@@ -215,7 +235,6 @@ Generate strict JSON:
       [/خبرة/g, 'Experience'],
       [/راتب/g, 'Salary'],
       [/إقامة سارية/g, 'Valid Transferable Iqama'],
-      [/نقل كفالة/g, 'Transfer of Sponsorship'],
     ];
 
     for (const [pattern, replacement] of dictionary) {

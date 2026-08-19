@@ -14,6 +14,9 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 export default async function AdminDashboardPage() {
   let pendingJobs: any[] = [];
   let stats = {
@@ -32,7 +35,7 @@ export default async function AdminDashboardPage() {
       prisma.job.findMany({
         where: { status: 'PENDING_APPROVAL' },
         orderBy: { createdAt: 'desc' },
-        take: 30,
+        take: 50,
       }),
     ]);
 
@@ -149,7 +152,7 @@ export default async function AdminDashboardPage() {
                   <form action={`/api/jobs/approve?id=${job.id}&action=approve`} method="POST">
                     <button
                       type="submit"
-                      className="flex items-center gap-1 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm transition-all"
+                      className="flex items-center gap-1 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm transition-all cursor-pointer"
                     >
                       <CheckCircle2 className="w-3.5 h-3.5" />
                       <span>Approve &amp; Broadcast</span>
@@ -159,7 +162,7 @@ export default async function AdminDashboardPage() {
                   <form action={`/api/jobs/approve?id=${job.id}&action=reject`} method="POST">
                     <button
                       type="submit"
-                      className="p-2 rounded-xl border border-rose-200 text-rose-600 hover:bg-rose-50 text-xs font-medium transition-all"
+                      className="p-2 rounded-xl border border-rose-200 text-rose-600 hover:bg-rose-50 text-xs font-medium transition-all cursor-pointer"
                       title="Reject"
                     >
                       <XCircle className="w-4 h-4" />

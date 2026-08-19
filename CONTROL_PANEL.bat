@@ -8,10 +8,10 @@ echo                 KSA JOBS - MASTER CONTROL PANEL
 echo ============================================================
 echo.
 echo   [1] Start Everything (Bot Service + Web Portal)
-echo   [2] Start Autonomous Bot Service Only
+echo   [2] Start Autonomous Bot Service Only (Scrapers & Broadcaster)
 echo   [3] Start Web Portal Only (http://localhost:3000)
-echo   [4] WhatsApp Login / Show QR Code
-echo   [5] Scan CV Inbox (Gmail) Once
+echo   [4] Run Dedicated Gmail CV / Candidate Scanner
+echo   [5] WhatsApp Login / Show QR Code
 echo   [6] Rebuild All Packages
 echo   [7] Exit
 echo.
@@ -32,11 +32,11 @@ if "%choice%"=="3" (
     goto menu
 )
 if "%choice%"=="4" (
-    start "KSA JOBS - WhatsApp QR" cmd /k "cd /d %~dp0 && pnpm qr"
+    start "KSA JOBS - CV Inbox Scan" cmd /k "cd /d %~dp0 && START_CV_SCANNER.bat"
     goto menu
 )
 if "%choice%"=="5" (
-    start "KSA JOBS - CV Inbox Scan" cmd /k "cd /d %~dp0 && pnpm scan:gmail"
+    start "KSA JOBS - WhatsApp QR" cmd /k "cd /d %~dp0 && pnpm qr"
     goto menu
 )
 if "%choice%"=="6" (

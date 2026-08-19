@@ -6,6 +6,8 @@
     "start": "pnpm --filter @ksajobs/bot start",
     "start:bot": "pnpm --filter @ksajobs/bot start",
     "start:web": "pnpm --filter @ksajobs/web start",
+    "scan:cv": "pnpm --filter @ksajobs/bot scan:gmail",
+    "scan:cv:all": "pnpm --filter @ksajobs/bot scan:gmail:all",
     "dev": "pnpm --filter @ksajobs/bot dev",
     "dev:web": "pnpm --filter @ksajobs/web dev",
     "dev:bot": "pnpm --filter @ksajobs/bot dev",

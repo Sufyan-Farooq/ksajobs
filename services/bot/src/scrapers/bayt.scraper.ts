@@ -7,7 +7,7 @@ export class BaytScraper extends BaseScraper {
   readonly platform: SourcePlatform = 'bayt';
 
   /**
-   * Scrapes Bayt.com KSA jobs with full detail page extraction
+   * Scrapes Bayt.com KSA genuine job vacancies (filters out navigation/category links)
    */
   async scrape(maxJobs: number = 10): Promise<RawScrapedJob[]> {
     const jobs: RawScrapedJob[] = [];
@@ -26,7 +26,6 @@ export class BaytScraper extends BaseScraper {
         ],
       });
 
-      // Index context
       const indexCtx = await browser.newContext({
         userAgent:
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
@@ -45,23 +44,46 @@ export class BaytScraper extends BaseScraper {
 
       const listingLinks: { title: string; href: string }[] = [];
 
-      // Extract all listing cards
-      $('a[data-js-view="search-job-title"], h2.h5 a, a[href*="/jobs/"]').each((_, el) => {
-        const href = $(el).attr('href');
+      // Extract genuine job vacancy cards only
+      $('a[data-js-view="search-job-title"], h2.h5 a, li[data-js-job] a[href*="/jobs/"]').each((_, el) => {
+        const href = $(el).attr('href') || '';
         const title = this.cleanText($(el).text());
-        if (href && title && title.length > 5 && href.includes('/jobs/') && !listingLinks.some((l) => l.href === href)) {
+
+        // Skip non-job navigation links
+        if (
+          !href ||
+          !title ||
+          title.length < 5 ||
+          href.includes('/locations/') ||
+          href.includes('/countries/') ||
+          href.includes('/cities/') ||
+          href.includes('/roles/') ||
+          href.includes('/industries/') ||
+          href.includes('/salaries/') ||
+          href.includes('/career-advice/') ||
+          title.toLowerCase().startsWith('jobs in') ||
+          title.toLowerCase().startsWith('countries hiring') ||
+          title.toLowerCase().startsWith('executive jobs') ||
+          title.toLowerCase().startsWith('work from home') ||
+          title.toLowerCase().includes('find the job you love')
+        ) {
+          return;
+        }
+
+        // Genuine Bayt job URLs usually contain a numerical ID e.g. -5444639/ or /job/
+        const isJobUrl = /\d+\/?$/.test(href) || href.includes('/job/');
+        if (isJobUrl && !listingLinks.some((l) => l.href === href)) {
           listingLinks.push({ title, href });
         }
       });
 
       await indexCtx.close();
-      logger.info({ found: listingLinks.length }, 'Found Bayt job cards on page');
+      logger.info({ found: listingLinks.length }, 'Found genuine Bayt job vacancy cards');
 
       for (const item of listingLinks) {
         if (jobs.length >= maxJobs) break;
 
         const rawUrl = item.href.startsWith('http') ? item.href : `https://www.bayt.com${item.href}`;
-        // Ensure English interface URL
         const cleanUrl = rawUrl.replace('https://www.bayt.com/ar/', 'https://www.bayt.com/en/').split('?')[0];
 
         try {
@@ -75,8 +97,8 @@ export class BaytScraper extends BaseScraper {
           });
 
           const page = await detailCtx.newPage();
-          await page.goto(cleanUrl, { waitUntil: 'domcontentloaded', timeout: 25000 });
-          await page.waitForTimeout(3500);
+          await page.goto(cleanUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+          await page.waitForTimeout(2500);
 
           const fullHtml = await page.content();
           await detailCtx.close();
@@ -93,8 +115,9 @@ export class BaytScraper extends BaseScraper {
           else if (locText.includes('Jeddah')) location = 'Jeddah, Saudi Arabia';
           else if (locText.includes('Dammam')) location = 'Dammam, Saudi Arabia';
           else if (locText.includes('Khobar')) location = 'Al Khobar, Saudi Arabia';
+          else if (locText.includes('Mecca') || locText.includes('Makkah')) location = 'Mecca, Saudi Arabia';
+          else if (locText.includes('Medina') || locText.includes('Madinah')) location = 'Medina, Saudi Arabia';
 
-          // Extract job description & specifications
           const descEl = $detail('[data-js-view="job-description"], .t-break, #job_desc, .card-content');
           descEl.find('br').replaceWith('\n');
           descEl.find('p, div, li').each((_, el) => {
@@ -121,16 +144,16 @@ export class BaytScraper extends BaseScraper {
             applyUrl: cleanUrl,
           });
 
-          await this.sleep(300, 600);
+          await this.sleep(400, 800);
         } catch (detailErr: any) {
-          logger.warn({ error: detailErr.message, url: cleanUrl }, 'Could not load Bayt detail page');
+          logger.info({ url: cleanUrl }, 'Could not load Bayt detail page, skipping');
         }
       }
     } catch (err: any) {
       logger.error({ error: err.message }, 'Error scraping Bayt KSA');
     } finally {
       if (browser) {
-        await browser.close();
+        await browser.close().catch(() => {});
       }
     }
 

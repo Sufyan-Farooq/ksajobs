@@ -7,11 +7,16 @@ export class ExpatriatesScraper extends BaseScraper {
   readonly platform: SourcePlatform = 'expatriates';
 
   /**
-   * Scrapes Expatriates.com KSA classifieds - STRICTLY ORGANIC / DIRECT EMPLOYER POSTS (Excludes sponsored/featured/premium ads)
+   * Scrapes genuine 100% organic direct employer classified postings across major Saudi cities
    */
   async scrape(maxJobs: number = 10): Promise<RawScrapedJob[]> {
     const jobs: RawScrapedJob[] = [];
-    const url = 'https://www.expatriates.com/classifieds/saudi-arabia/jobs/';
+    const searchUrls = [
+      'https://www.expatriates.com/scripts/serp.r?category=100&city=173', // Riyadh
+      'https://www.expatriates.com/scripts/serp.r?category=100&city=174', // Jeddah
+      'https://www.expatriates.com/scripts/serp.r?category=100&city=177', // Dammam & Eastern Province
+      'https://www.expatriates.com/scripts/serp.r?category=100&city=175', // Jubail
+    ];
 
     logger.info({ platform: this.platform, maxJobs }, 'Starting Expatriates KSA organic employer scraper...');
 
@@ -26,46 +31,55 @@ export class ExpatriatesScraper extends BaseScraper {
         ],
       });
 
-      // Index context
-      const indexCtx = await browser.newContext({
-        userAgent:
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-        locale: 'en-US',
-      });
-      await indexCtx.addInitScript(() => {
-        delete (Object.getPrototypeOf(navigator) as any).webdriver;
-      });
-
-      const indexPage = await indexCtx.newPage();
-      await indexPage.goto(url, { waitUntil: 'domcontentloaded', timeout: 35000 });
-      await indexPage.waitForTimeout(3500);
-
-      const html = await indexPage.content();
-      const $ = cheerio.load(html);
-
       const links: { title: string; href: string }[] = [];
 
-      // Extract STRICTLY Organic / Direct employer listings (EXCLUDE sponsored / featured / premium)
-      $('li').each((_, el) => {
-        const item = $(el);
-        const isPremium = item.attr('premium')?.toLowerCase() === 'true';
-        const isSponsoredText = item.find('.epoch').text().trim().toLowerCase().includes('sponsored');
-        const isBanner = item.find('.banner').length > 0;
+      for (const listUrl of searchUrls) {
+        if (links.length >= maxJobs * 2) break;
 
-        // 🛑 STRICT EXCLUSION: Skip all sponsored / featured / premium posts
-        if (isPremium || isSponsoredText || isBanner) {
-          return;
+        try {
+          const indexCtx = await browser.newContext({
+            userAgent:
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+            locale: 'en-US',
+          });
+          await indexCtx.addInitScript(() => {
+            delete (Object.getPrototypeOf(navigator) as any).webdriver;
+          });
+
+          const page = await indexCtx.newPage();
+          await page.goto(listUrl, { waitUntil: 'domcontentloaded', timeout: 25000 });
+          await page.waitForTimeout(2000);
+
+          const html = await page.content();
+          await indexCtx.close();
+
+          const $ = cheerio.load(html);
+
+          // Strictly filter for ORGANIC listings only
+          $('li.list-item, li.listing, div.classified, li[class*="item"]').each((_, el) => {
+            const item = $(el);
+
+            if (item.attr('premium') === 'True' || item.hasClass('banner') || item.hasClass('sponsored')) {
+              return;
+            }
+
+            const epochText = item.find('.epoch, .date, .badge').text().toLowerCase();
+            if (epochText.includes('sponsored') || epochText.includes('promoted')) {
+              return;
+            }
+
+            const linkEl = item.find('a[href*="/cls/"]').first();
+            const title = this.cleanText(linkEl.text());
+            const href = linkEl.attr('href');
+            if (href && title && title.length > 4 && !links.some((l) => l.href === href)) {
+              links.push({ title, href });
+            }
+          });
+        } catch (idxErr: any) {
+          logger.warn({ url: listUrl, error: idxErr.message }, 'Failed to load Expatriates city index');
         }
+      }
 
-        const linkEl = item.find('a[href*="/cls/"]').first();
-        const title = this.cleanText(linkEl.text());
-        const href = linkEl.attr('href');
-        if (href && title && title.length > 4 && !links.some((l) => l.href === href)) {
-          links.push({ title, href });
-        }
-      });
-
-      await indexCtx.close();
       logger.info({ count: links.length }, 'Found Expatriates Organic listings on page');
 
       for (const item of links) {
@@ -86,13 +100,31 @@ export class ExpatriatesScraper extends BaseScraper {
           });
 
           const page = await detailCtx.newPage();
-          await page.goto(cleanUrl, { waitUntil: 'domcontentloaded', timeout: 25000 });
-          await page.waitForTimeout(4000);
+          await page.goto(cleanUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+          await page.waitForTimeout(2500);
 
           const fullHtml = await page.content();
           await detailCtx.close();
 
           const $detail = cheerio.load(fullHtml);
+
+          // Extract Recruiter Email & Phone before script removal
+          const rawHtml = $detail.html();
+          let contactEmail: string | undefined;
+          const emailMatch = rawHtml.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+          if (emailMatch && !emailMatch[0].toLowerCase().includes('cloudflare') && !emailMatch[0].includes('example.com') && !emailMatch[0].includes('expatriates.com')) {
+            contactEmail = emailMatch[0];
+          }
+
+          let contactPhone: string | undefined;
+          const phoneMatch = rawHtml.match(/(?:\+966|00966|0)?5[0-9]{8}/);
+          if (phoneMatch) {
+            contactPhone = phoneMatch[0];
+          }
+
+          // Strip ALL scripts, styles, ads, and interactive buttons from DOM
+          $detail('script, style, iframe, .adsbygoogle, ins, button, nav, header, footer, noscript').remove();
+
           const fullPageText = $detail('body').text();
 
           // Extract Region / City
@@ -102,23 +134,7 @@ export class ExpatriatesScraper extends BaseScraper {
             location = regionMatch[1].trim();
           }
 
-          // Extract Recruiter Email
-          let contactEmail: string | undefined;
-          const emailMatch = fullPageText.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-          if (emailMatch && !emailMatch[0].toLowerCase().includes('cloudflare') && !emailMatch[0].includes('example.com')) {
-            contactEmail = emailMatch[0];
-          }
-
-          // Extract Recruiter Phone / WhatsApp
-          let contactPhone: string | undefined;
-          const phoneMatch = fullPageText.match(/(?:\+966|00966|0)?5[0-9]{8}/);
-          if (phoneMatch) {
-            contactPhone = phoneMatch[0];
-          }
-
-          // Extract clean pure post body preserving original line breaks
-          $detail('script, style, iframe, .adsbygoogle, ins, button, nav, header, footer').remove();
-
+          // Extract clean pure post body
           let description = '';
           const postBodyEl = $detail('.post-body, .listing-body, .classified-body, div.post');
           if (postBodyEl.length > 0) {
@@ -146,8 +162,13 @@ export class ExpatriatesScraper extends BaseScraper {
             }
           }
 
-          // Clean website noise from description
+          // Strip JavaScript code blocks, obfuscated functions, and noise
           description = description
+            .replace(/\(function\(\)\s*\{[\s\S]*?\}\)\(\);?/g, '')
+            .replace(/var\s+\w+\s*=[\s\S]*?;/g, '')
+            .replace(/\(adsbygoogle\s*=[\s\S]*?\);/g, '')
+            .replace(/Finding Residential Apartment Rentals[\s\S]*?For Deals/gi, '')
+            .replace(/Browsing Local s For Deals/gi, '')
             .replace(/Back\s*Next/gi, '')
             .replace(/Email to a Friend/gi, '')
             .replace(/Ask AI to Review This Ad/gi, '')
@@ -161,24 +182,24 @@ export class ExpatriatesScraper extends BaseScraper {
             sourcePlatform: 'expatriates',
             sourceUrl: cleanUrl,
             title: item.title,
-            companyName: contactEmail ? contactEmail.split('@')[0].toUpperCase() : 'Direct Employer',
+            companyName: 'Direct Employer / Classified',
             locationRaw: location,
             descriptionRaw: description || item.title,
-            applyUrl: cleanUrl,
             contactEmail,
             contactPhone,
+            applyUrl: cleanUrl,
           });
 
           await this.sleep(300, 600);
         } catch (detailErr: any) {
-          logger.warn({ error: detailErr.message, url: cleanUrl }, 'Could not load detail page');
+          logger.info({ url: cleanUrl }, 'Could not load Expatriates post, skipping');
         }
       }
     } catch (err: any) {
-      logger.error({ error: err.message }, 'Error in Expatriates browser scraper');
+      logger.error({ error: err.message }, 'Error scraping Expatriates KSA');
     } finally {
       if (browser) {
-        await browser.close();
+        await browser.close().catch(() => {});
       }
     }
 

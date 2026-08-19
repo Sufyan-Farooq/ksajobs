@@ -15,6 +15,17 @@ import {
 } from './embed-builder.js';
 import { logger } from '../scrapers/base.scraper.js';
 
+function extractJobId(rawId: string): string {
+  return rawId
+    .replace(/^reject_modal_/, '')
+    .replace(/^reject_job:/, '')
+    .replace(/^reject_/, '')
+    .replace(/^approve_job:/, '')
+    .replace(/^approve_/, '')
+    .replace(/^job:/, '')
+    .trim();
+}
+
 export async function handleDiscordButton(
   interaction: ButtonInteraction,
   bot: DiscordModerationBot,
@@ -22,9 +33,9 @@ export async function handleDiscordButton(
 ): Promise<void> {
   const customId = interaction.customId;
   const userTag = interaction.user.tag;
+  const jobId = extractJobId(customId);
 
-  if (customId.startsWith('approve_')) {
-    const jobId = customId.replace('approve_', '');
+  if (customId.startsWith('approve')) {
     await interaction.deferUpdate();
 
     try {
@@ -60,9 +71,7 @@ export async function handleDiscordButton(
     } catch (err: any) {
       logger.error({ error: err.message, jobId }, 'Failed to approve job from Discord');
     }
-  } else if (customId.startsWith('reject_')) {
-    const jobId = customId.replace('reject_', '');
-
+  } else if (customId.startsWith('reject')) {
     // Show rejection modal for custom reason
     const modal = new ModalBuilder()
       .setCustomId(`reject_modal_${jobId}`)
@@ -88,9 +97,9 @@ export async function handleDiscordModal(
 ): Promise<void> {
   const customId = interaction.customId;
   const userTag = interaction.user.tag;
+  const jobId = extractJobId(customId);
 
   if (customId.startsWith('reject_modal_')) {
-    const jobId = customId.replace('reject_modal_', '');
     const reason = interaction.fields.getTextInputValue('rejection_reason');
 
     await interaction.deferUpdate();
