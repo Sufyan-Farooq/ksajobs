@@ -7,11 +7,11 @@ export class TanqeebScraper extends BaseScraper {
   readonly platform: SourcePlatform = 'tanqeeb';
 
   /**
-   * Scrapes verified Saudi Arabia Tanqeeb listings with full detail extraction and English URLs
+   * Scrapes genuine Tanqeeb KSA job vacancies with full details & bullet points
    */
   async scrape(maxJobs: number = 10): Promise<RawScrapedJob[]> {
     const jobs: RawScrapedJob[] = [];
-    const url = 'https://saudi.tanqeeb.com/en/jobs/search?country=saudi-arabia';
+    const url = 'https://saudi.tanqeeb.com/en/jobs-in-saudi/all/jobs/0.html';
 
     logger.info({ platform: this.platform, maxJobs }, 'Starting Tanqeeb KSA browser scraper...');
 
@@ -26,7 +26,6 @@ export class TanqeebScraper extends BaseScraper {
         ],
       });
 
-      // Index context
       const indexCtx = await browser.newContext({
         userAgent:
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
@@ -45,14 +44,23 @@ export class TanqeebScraper extends BaseScraper {
 
       const links: { title: string; href: string }[] = [];
 
-      $('a[href*=".html"]').each((_, el) => {
-        const item = $(el);
-        const title = this.cleanText(item.text());
-        const href = item.attr('href') || '';
+      // Extract listing links from cards
+      $('a[href*="/jobs/"]').each((_, el) => {
+        const href = $(el).attr('href');
+        const title = this.cleanText($(el).text());
 
-        if (!title || !href || title.length < 4) return;
-        if (!href.includes('/jobs/') && !href.includes('/jobs-in-saudi/')) return;
-        if (href.includes('/jobs-in-uae/') || href.includes('/jobs-in-lebanon/') || href.includes('/jobs-in-egypt/')) {
+        if (
+          !href ||
+          !title ||
+          title.length < 5 ||
+          href.includes('/category/') ||
+          href.includes('/country/') ||
+          href.includes('/city/') ||
+          href.includes('/roles/') ||
+          title.includes('Find Related Jobs') ||
+          title.includes('Discover More') ||
+          title.includes('Looking to Hire')
+        ) {
           return;
         }
 
@@ -83,13 +91,13 @@ export class TanqeebScraper extends BaseScraper {
 
           const page = await detailCtx.newPage();
           await page.goto(item.href, { waitUntil: 'domcontentloaded', timeout: 25000 });
-          await page.waitForTimeout(3500);
+          await page.waitForTimeout(2500);
 
           const fullHtml = await page.content();
           await detailCtx.close();
 
           const $detail = cheerio.load(fullHtml);
-          $detail('script, style, iframe, header, footer, nav, .cookie-banner').remove();
+          $detail('script, style, iframe, header, footer, nav, .cookie-banner, .similar-jobs-container, .similar-job-item, [class*="similar"]').remove();
 
           // Title
           let pageTitle = item.title;
@@ -107,15 +115,58 @@ export class TanqeebScraper extends BaseScraper {
             }
           }
 
-          // Tags & Description
-          const tags = $detail('.job-tags').text().trim().replace(/\s+/g, ' ');
-          const rawBody = $detail('p, .job-description, .content')
-            .map((_, el) => $detail(el).text().trim())
-            .get()
-            .filter((t) => t.length > 15)
-            .join('\n');
+          // Extract richest job description card preserving all bullets and line breaks
+          let bestCardText = '';
+          let maxLen = 0;
 
-          const description = `${pageTitle}\nLocation: ${location}\n${tags ? `Job Type: ${tags}\n` : ''}${rawBody || `${pageTitle} in ${location}. Apply directly on Tanqeeb.`}`;
+          $detail('.card').each((_, el) => {
+            const cardEl = $detail(el);
+            const raw = cardEl.text();
+            if (
+              !raw.includes('Discover More Opportunities') &&
+              !raw.includes('Looking to Hire?') &&
+              !raw.includes('Find Related Jobs') &&
+              !raw.includes('Similar Jobs') &&
+              !raw.includes('Apply on the Job Website')
+            ) {
+              cardEl.find('br').replaceWith('\n');
+              cardEl.find('p, div, li, h2, h3, h4, h5').each((_, node) => {
+                $detail(node).append('\n');
+              });
+              const lines = cardEl.text()
+                .split('\n')
+                .map((l) => l.trim())
+                .filter((l) => l.length > 0 && !l.includes('Show Arabic translation') && !l.includes('Show English translation'));
+              
+              const clean = lines.join('\n');
+              if (clean.length > maxLen) {
+                maxLen = clean.length;
+                bestCardText = clean;
+              }
+            }
+          });
+
+          // If bestCardText has both English and Tanqeeb's auto-appended Arabic block, keep the English section
+          let finalDescription = bestCardText;
+          if (finalDescription.includes('في ') && /[a-zA-Z]{4,}/.test(finalDescription.slice(0, 300))) {
+            const splitArabic = finalDescription.search(/[\u0600-\u06FF]{4,}/);
+            if (splitArabic > 200) {
+              finalDescription = finalDescription.slice(0, splitArabic).trim();
+            }
+          }
+
+          // Filter out foreign non-Saudi postings (e.g. Missouri, USA)
+          const lowerDesc = finalDescription.toLowerCase();
+          if (
+            (lowerDesc.includes('missouri') || lowerDesc.includes('united states') || lowerDesc.includes('401(k)')) &&
+            lowerDesc.includes('$') &&
+            !lowerDesc.includes('riyadh') &&
+            !lowerDesc.includes('jeddah') &&
+            !lowerDesc.includes('dammam')
+          ) {
+            logger.info({ title: pageTitle }, 'Skipping foreign non-Saudi job posting indexed on Tanqeeb');
+            continue;
+          }
 
           jobs.push({
             sourcePlatform: 'tanqeeb',
@@ -123,7 +174,7 @@ export class TanqeebScraper extends BaseScraper {
             title: pageTitle,
             companyName: 'Saudi Enterprise',
             locationRaw: location,
-            descriptionRaw: description,
+            descriptionRaw: finalDescription || `${pageTitle} in ${location}. Apply directly on Tanqeeb.`,
             applyUrl: item.href,
           });
 
