@@ -35,18 +35,21 @@ async function bootstrap() {
     }
   }, 5000);
 
-  // 6. Schedule Periodic Automated Scraper Cron Job
-  const cronInterval = process.env.SCRAPER_CRON_INTERVAL || '0 * * * *';
-  const maxJobs = parseInt(process.env.SCRAPER_MAX_JOBS_PER_RUN || '20', 10);
+  // 6. Schedule Periodic Automated Scraper Cron Job (Every 2 Hours)
+  const cronInterval = process.env.SCRAPER_CRON_INTERVAL || '0 */2 * * *';
+  const maxJobs = parseInt(process.env.SCRAPER_MAX_JOBS_PER_RUN || '30', 10);
 
-  logger.info({ cronInterval, maxJobs }, '⏰ Scheduling automated 1-hour job scraper...');
+  logger.info(
+    { cronInterval, maxJobs, reportChannel: process.env.DISCORD_LOGS_CHANNEL_ID || '1539689386596376656' },
+    '⏰ Scheduling automated 2-hour job scraper & Discord cycle reports...'
+  );
 
   cron.schedule(cronInterval, async () => {
-    logger.info('⏰ Scheduled Cron Triggered: Checking for new KSA job postings...');
+    logger.info('⏰ 2-Hour Scheduled Cron Triggered: Checking for fresh KSA job postings...');
     try {
       await pipeline.runCycle(undefined, maxJobs);
     } catch (err: any) {
-      logger.error({ error: err.message }, 'Error in scheduled job scrape run');
+      logger.error({ error: err.message }, 'Error in scheduled 2-hour job scrape run');
     }
   });
 

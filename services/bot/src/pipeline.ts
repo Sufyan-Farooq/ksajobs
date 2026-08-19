@@ -1,6 +1,6 @@
-import { scrapers, runAllScrapers } from './scrapers/index.js';
+import { scrapers } from './scrapers/index.js';
 import { GeminiJobParser } from './ai/gemini.service.js';
-import { DiscordModerationBot } from './discord/discord.bot.js';
+import { DiscordModerationBot, PlatformCycleStats } from './discord/discord.bot.js';
 import { WhatsAppBroadcaster } from './whatsapp/whatsapp.service.js';
 import { jobRepository, prisma } from '@ksajobs/database';
 import { logger } from './scrapers/base.scraper.js';
@@ -24,9 +24,9 @@ export class IngestionPipeline {
   /**
    * Run a full scrape, AI parse, and Discord ingestion cycle
    */
-  async runCycle(platform?: SourcePlatform, maxJobsPerPlatform: number = 10) {
+  async runCycle(platform?: SourcePlatform, maxJobsPerPlatform: number = 25) {
     logger.info({ platform: platform || 'all' }, 'Starting job ingestion cycle...');
-    const startTime = new Date();
+    const startTime = Date.now();
 
     const targetScrapers = platform
       ? [scrapers[platform]].filter(Boolean)
@@ -35,6 +35,9 @@ export class IngestionPipeline {
     let totalFound = 0;
     let totalInserted = 0;
     let totalDuplicates = 0;
+
+    const platformStats: PlatformCycleStats[] = [];
+    const newJobsSample: { title: string; company: string; city: string; platform: string }[] = [];
 
     for (const scraper of targetScrapers) {
       const runLog = await prisma.scraperRunLog.create({
@@ -62,7 +65,7 @@ export class IngestionPipeline {
             continue;
           }
 
-          // 2. AI Parse & Enrich
+          // 2. AI Parse & Enrich with graceful rate-limit delay
           logger.info({ title: raw.title, platform: raw.sourcePlatform }, 'Enriching job with AI...');
           const parsed = await this.parser.parse(raw);
 
@@ -71,11 +74,23 @@ export class IngestionPipeline {
           inserted++;
           totalInserted++;
 
+          if (newJobsSample.length < 8) {
+            newJobsSample.push({
+              title: parsed.titleEn || raw.title,
+              company: parsed.companyName || raw.companyName || 'Saudi Employer',
+              city: parsed.cityEn || 'Saudi Arabia',
+              platform: raw.sourcePlatform,
+            });
+          }
+
           // 4. Send to Discord #jobs-pending approval queue
           const discordMsgId = await this.discordBot.postPendingJob(jobRecord.id, parsed, raw);
           if (discordMsgId) {
             await jobRepository.setDiscordMessageId(jobRecord.id, discordMsgId);
           }
+
+          // Gentle throttling between AI calls to stay gracefully below rate limits
+          await new Promise((r) => setTimeout(r, 1200));
         }
 
         await prisma.scraperRunLog.update({
@@ -98,10 +113,27 @@ export class IngestionPipeline {
           },
         });
       }
+
+      platformStats.push({
+        platform: scraper.platform,
+        found,
+        inserted,
+        duplicates,
+      });
     }
 
+    const durationSeconds = Math.max(1, Math.round((Date.now() - startTime) / 1000));
     const summaryMsg = `📊 **Scrape Cycle Completed**: Found ${totalFound} jobs | 📥 ${totalInserted} new pending review | 🔁 ${totalDuplicates} duplicates skipped.`;
-    logger.info(summaryMsg);
-    await this.discordBot.logToGeneral(summaryMsg);
+    logger.info({ durationSeconds }, summaryMsg);
+
+    // Send rich summary report to dedicated Discord Channel 1539689386596376656
+    await this.discordBot.sendCycleSummaryReport({
+      durationSeconds,
+      totalFound,
+      totalInserted,
+      totalDuplicates,
+      platforms: platformStats,
+      newJobsSample,
+    });
   }
 }
