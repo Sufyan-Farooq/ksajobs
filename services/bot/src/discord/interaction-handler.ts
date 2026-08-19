@@ -6,40 +6,38 @@ import {
   TextInputStyle,
   ActionRowBuilder,
 } from 'discord.js';
-import { jobRepository, prisma } from '@ksajobs/database';
-import { buildApprovedEmbed, buildRejectedEmbed } from './embed-builder.js';
-import { logger } from '../scrapers/base.scraper.js';
+import { prisma } from '@ksajobs/database';
 import type { WhatsAppBroadcaster } from '../whatsapp/whatsapp.service.js';
 import type { DiscordModerationBot } from './discord.bot.js';
+import {
+  buildApprovedEmbed,
+  buildRejectedEmbed,
+} from './embed-builder.js';
+import { logger } from '../scrapers/base.scraper.js';
 
 export async function handleDiscordButton(
   interaction: ButtonInteraction,
   bot: DiscordModerationBot,
   whatsAppService?: WhatsAppBroadcaster
-) {
-  const [action, jobId] = interaction.customId.split(':');
+): Promise<void> {
+  const customId = interaction.customId;
   const userTag = interaction.user.tag;
 
-  if (!jobId) return;
+  if (customId.startsWith('approve_')) {
+    const jobId = customId.replace('approve_', '');
+    await interaction.deferUpdate();
 
-  try {
-    if (action === 'approve_job') {
-      await interaction.deferUpdate();
+    try {
+      const updated = await prisma.job.update({
+        where: { id: jobId },
+        data: {
+          status: 'APPROVED',
+          approvedBy: userTag,
+          approvedAt: new Date(),
+        },
+      });
 
-      // 1. Update status in Database
-      const updatedJob = await jobRepository.approveJob(jobId, userTag);
-
-      // 2. Broadcast to WhatsApp Groups
-      if (whatsAppService && updatedJob.whatsappMessageText) {
-        whatsAppService.enqueueBroadcast(
-          updatedJob.id,
-          updatedJob.whatsappMessageText,
-          updatedJob.cityEn,
-          updatedJob.category
-        );
-      }
-
-      // 3. Update Discord message UI
+      // Update Discord message UI
       const originalEmbed = interaction.message.embeds[0];
       const approvedEmbed = buildApprovedEmbed(originalEmbed, userTag);
 
@@ -48,103 +46,77 @@ export async function handleDiscordButton(
         components: [],
       });
 
-      // 4. Forward to #approved channel & general logs
-      await bot.postApprovedFeed(approvedEmbed);
-      await bot.logToGeneral(`✅ **Job Approved**: \`${updatedJob.titleAr || updatedJob.titleEn}\` by **${userTag}**.`);
+      logger.info({ jobId, approvedBy: userTag }, 'Job approved by moderator via Discord');
 
-      logger.info({ jobId, approvedBy: userTag }, 'Job approved and enqueued for WhatsApp broadcast');
-    } else if (action === 'reject_job') {
-      await interaction.deferUpdate();
-
-      // 1. Update status in Database
-      const updatedJob = await jobRepository.rejectJob(jobId, `Rejected by moderator ${userTag}`);
-
-      // 2. Update Discord message UI
-      const originalEmbed = interaction.message.embeds[0];
-      const rejectedEmbed = buildRejectedEmbed(originalEmbed, userTag);
-
-      await interaction.editReply({
-        embeds: [rejectedEmbed],
-        components: [],
-      });
-
-      // 3. Forward to #rejected channel
-      await bot.postRejectedFeed(rejectedEmbed);
-      await bot.logToGeneral(`❌ **Job Rejected**: \`${updatedJob.titleAr || updatedJob.titleEn}\` by **${userTag}**.`);
-
-      logger.info({ jobId, rejectedBy: userTag }, 'Job rejected by moderator');
-    } else if (action === 'edit_job') {
-      const job = await prisma.job.findUnique({ where: { id: jobId } });
-      if (!job) {
-        await interaction.reply({ content: 'Job not found in database.', ephemeral: true });
-        return;
+      // Broadcast to WhatsApp Groups & Channels
+      if (whatsAppService && updated.whatsappMessageText) {
+        await whatsAppService.broadcastJob(
+          updated.id,
+          updated.whatsappMessageText,
+          updated.cityEn,
+          updated.category
+        );
       }
-
-      const modal = new ModalBuilder()
-        .setCustomId(`modal_edit_job:${jobId}`)
-        .setTitle('Edit Job Details before Approval');
-
-      const titleInput = new TextInputBuilder()
-        .setCustomId('job_title')
-        .setLabel('Job Title')
-        .setStyle(TextInputStyle.Short)
-        .setValue(job.titleEn || '')
-        .setRequired(true);
-
-      const cityInput = new TextInputBuilder()
-        .setCustomId('job_city')
-        .setLabel('City (English / Arabic)')
-        .setStyle(TextInputStyle.Short)
-        .setValue(`${job.cityEn} / ${job.cityAr || ''}`)
-        .setRequired(true);
-
-      const whatsappInput = new TextInputBuilder()
-        .setCustomId('job_whatsapp')
-        .setLabel('WhatsApp Message Text')
-        .setStyle(TextInputStyle.Paragraph)
-        .setValue(job.whatsappMessageText.slice(0, 3900))
-        .setRequired(true);
-
-      modal.addComponents(
-        new ActionRowBuilder<TextInputBuilder>().addComponents(titleInput),
-        new ActionRowBuilder<TextInputBuilder>().addComponents(cityInput),
-        new ActionRowBuilder<TextInputBuilder>().addComponents(whatsappInput)
-      );
-
-      await interaction.showModal(modal);
+    } catch (err: any) {
+      logger.error({ error: err.message, jobId }, 'Failed to approve job from Discord');
     }
-  } catch (err: any) {
-    logger.error({ error: err.message, customId: interaction.customId }, 'Error handling Discord interaction');
-    await bot.logToError(`⚠️ Error handling button click \`${interaction.customId}\`: ${err.message}`);
-    if (!interaction.replied && !interaction.deferred) {
-      await interaction.reply({ content: `Action failed: ${err.message}`, ephemeral: true });
-    }
+  } else if (customId.startsWith('reject_')) {
+    const jobId = customId.replace('reject_', '');
+
+    // Show rejection modal for custom reason
+    const modal = new ModalBuilder()
+      .setCustomId(`reject_modal_${jobId}`)
+      .setTitle('Reject Job Posting');
+
+    const reasonInput = new TextInputBuilder()
+      .setCustomId('rejection_reason')
+      .setLabel('Reason for rejection')
+      .setStyle(TextInputStyle.Paragraph)
+      .setPlaceholder('e.g. Incomplete details, duplicate post, expired listing...')
+      .setRequired(true);
+
+    const row = new ActionRowBuilder<TextInputBuilder>().addComponents(reasonInput);
+    modal.addComponents(row);
+
+    await interaction.showModal(modal);
   }
 }
 
 export async function handleDiscordModal(
   interaction: ModalSubmitInteraction,
-  whatsAppService?: WhatsAppBroadcaster
-) {
-  const [action, jobId] = interaction.customId.split(':');
-  if (action !== 'modal_edit_job' || !jobId) return;
+  _whatsAppService?: WhatsAppBroadcaster
+): Promise<void> {
+  const customId = interaction.customId;
+  const userTag = interaction.user.tag;
 
-  try {
+  if (customId.startsWith('reject_modal_')) {
+    const jobId = customId.replace('reject_modal_', '');
+    const reason = interaction.fields.getTextInputValue('rejection_reason');
+
     await interaction.deferUpdate();
 
-    const titleEn = interaction.fields.getTextInputValue('job_title');
-    const whatsappMessageText = interaction.fields.getTextInputValue('job_whatsapp');
+    try {
+      await prisma.job.update({
+        where: { id: jobId },
+        data: {
+          status: 'REJECTED',
+          rejectionReason: reason,
+        },
+      });
 
-    await prisma.job.update({
-      where: { id: jobId },
-      data: {
-        titleEn,
-        whatsappMessageText,
-      },
-    });
+      if (interaction.message) {
+        const originalEmbed = interaction.message.embeds[0];
+        const rejectedEmbed = buildRejectedEmbed(originalEmbed, userTag, reason);
 
-    logger.info({ jobId, editedBy: interaction.user.tag }, 'Job details updated via Discord modal');
-  } catch (err: any) {
-    logger.error({ error: err.message }, 'Error handling modal submit');
+        await interaction.editReply({
+          embeds: [rejectedEmbed],
+          components: [],
+        });
+      }
+
+      logger.info({ jobId, rejectedBy: userTag, reason }, 'Job rejected by moderator via Discord');
+    } catch (err: any) {
+      logger.error({ error: err.message, jobId }, 'Failed to reject job from Discord modal');
+    }
   }
 }

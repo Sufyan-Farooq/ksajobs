@@ -83,7 +83,7 @@ export class IngestionPipeline {
           data: {
             jobsFound: found,
             jobsInserted: inserted,
-            jobsDuplicates: duplicates,
+            jobsDuplicate: duplicates,
             completedAt: new Date(),
           },
         });
@@ -92,7 +92,8 @@ export class IngestionPipeline {
         await prisma.scraperRunLog.update({
           where: { id: runLog.id },
           data: {
-            errors: err.message,
+            status: 'FAILED',
+            errorMessage: err.message,
             completedAt: new Date(),
           },
         });

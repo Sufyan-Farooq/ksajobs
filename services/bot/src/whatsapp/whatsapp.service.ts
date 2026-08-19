@@ -297,7 +297,7 @@ export class WhatsAppBroadcaster {
               jobId,
               groupId,
               status: 'FAILED',
-              errorMessage: err.message,
+              error: err.message,
             },
           });
         }
