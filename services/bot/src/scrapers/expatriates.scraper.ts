@@ -12,10 +12,10 @@ export class ExpatriatesScraper extends BaseScraper {
   async scrape(maxJobs: number = 10): Promise<RawScrapedJob[]> {
     const jobs: RawScrapedJob[] = [];
     const searchUrls = [
-      'https://www.expatriates.com/scripts/serp.r?category=100&city=173', // Riyadh
-      'https://www.expatriates.com/scripts/serp.r?category=100&city=174', // Jeddah
-      'https://www.expatriates.com/scripts/serp.r?category=100&city=177', // Dammam & Eastern Province
-      'https://www.expatriates.com/scripts/serp.r?category=100&city=175', // Jubail
+      'https://www.expatriates.com/classifieds/riyadh/jobs/',
+      'https://www.expatriates.com/classifieds/jeddah/jobs/',
+      'https://www.expatriates.com/classifieds/eastern-province/jobs/',
+      'https://www.expatriates.com/classifieds/saudi-arabia/jobs/',
     ];
 
     logger.info({ platform: this.platform, maxJobs }, 'Starting Expatriates KSA organic employer scraper...');
@@ -55,23 +55,21 @@ export class ExpatriatesScraper extends BaseScraper {
 
           const $ = cheerio.load(html);
 
-          // Strictly filter for ORGANIC listings only
-          $('li.list-item, li.listing, div.classified, li[class*="item"]').each((_, el) => {
-            const item = $(el);
-
-            if (item.attr('premium') === 'True' || item.hasClass('banner') || item.hasClass('sponsored')) {
-              return;
-            }
-
-            const epochText = item.find('.epoch, .date, .badge').text().toLowerCase();
-            if (epochText.includes('sponsored') || epochText.includes('promoted')) {
-              return;
-            }
-
-            const linkEl = item.find('a[href*="/cls/"]').first();
+          // Extract direct classified listing links
+          $('a[href*="/cls/"]').each((_, el) => {
+            const linkEl = $(el);
             const title = this.cleanText(linkEl.text());
             const href = linkEl.attr('href');
-            if (href && title && title.length > 4 && !links.some((l) => l.href === href)) {
+
+            // Skip empty links or thumbnail containers
+            if (
+              href &&
+              title &&
+              title.length > 5 &&
+              !title.includes('Page View Count') &&
+              !title.includes('Never pay any kind') &&
+              !links.some((l) => l.href === href)
+            ) {
               links.push({ title, href });
             }
           });
