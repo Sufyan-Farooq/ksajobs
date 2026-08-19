@@ -7,7 +7,7 @@ export class BaytScraper extends BaseScraper {
   readonly platform: SourcePlatform = 'bayt';
 
   /**
-   * Scrapes Bayt.com KSA genuine job vacancies (filters out navigation/category links)
+   * Scrapes Bayt.com KSA genuine job vacancies with full description & candidate profile
    */
   async scrape(maxJobs: number = 10): Promise<RawScrapedJob[]> {
     const jobs: RawScrapedJob[] = [];
@@ -104,7 +104,7 @@ export class BaytScraper extends BaseScraper {
           await detailCtx.close();
 
           const $detail = cheerio.load(fullHtml);
-          $detail('script, style, iframe, header, footer, nav, .cookie-banner').remove();
+          $detail('script, style, iframe, header, footer, nav, .cookie-banner, .similar-jobs, #similar_jobs').remove();
 
           const pageTitle = $detail('h1').text().trim() || item.title;
           const company = this.cleanText($detail('.t-company, .company, [data-js-view="company-name"]').text()) || 'Saudi Employer';
@@ -118,17 +118,30 @@ export class BaytScraper extends BaseScraper {
           else if (locText.includes('Mecca') || locText.includes('Makkah')) location = 'Mecca, Saudi Arabia';
           else if (locText.includes('Medina') || locText.includes('Madinah')) location = 'Medina, Saudi Arabia';
 
+          // Extract job description and candidate requirements
           const descEl = $detail('[data-js-view="job-description"], .t-break, #job_desc, .card-content');
           descEl.find('br').replaceWith('\n');
-          descEl.find('p, div, li').each((_, el) => {
+          descEl.find('p, div, li, h2, h3, h4, h5').each((_, el) => {
             $detail(el).append('\n');
           });
 
           let fullDescription = descEl.text()
             .split('\n')
             .map((l) => l.trim())
-            .filter((l) => l && !l.includes('Apply now') && !l.includes('Email to Friend') && !l.includes('Report this job') && !l.includes('Promote your job'))
+            .filter((l) => {
+              if (!l) return false;
+              if (l.includes('Apply now') || l.includes('Email to Friend') || l.includes('Report this job') || l.includes('Promote your job')) return false;
+              if (l.includes('Are you looking for') || l.includes('Similar jobs')) return false;
+              return true;
+            })
             .join('\n');
+
+          // Clean Bayt noise
+          fullDescription = fullDescription
+            .replace(/Report\s*this\s*job/gi, '')
+            .replace(/Promote\s*your\s*job/gi, '')
+            .replace(/Email\s*to\s*Friend/gi, '')
+            .trim();
 
           if (!fullDescription || fullDescription.length < 30) {
             fullDescription = `${pageTitle} at ${company} in ${location}.`;

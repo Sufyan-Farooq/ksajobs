@@ -61,17 +61,33 @@ export class ExpatriatesScraper extends BaseScraper {
             const title = this.cleanText(linkEl.text());
             const href = linkEl.attr('href');
 
-            // Skip empty links or thumbnail containers
+            // Skip non-job classifieds (account rentals, visa sales, housing spam)
+            const lowerTitle = (title || '').toLowerCase();
             if (
-              href &&
-              title &&
-              title.length > 5 &&
-              !title.includes('Page View Count') &&
-              !title.includes('Never pay any kind') &&
-              !links.some((l) => l.href === href)
+              !href ||
+              !title ||
+              title.length < 5 ||
+              title.includes('Page View Count') ||
+              title.includes('Never pay any kind') ||
+              lowerTitle.includes('for rent') ||
+              lowerTitle.includes('for sale') ||
+              lowerTitle.includes('للايجار') ||
+              lowerTitle.includes('للإيجار') ||
+              lowerTitle.includes('للبيع') ||
+              lowerTitle.includes('حسابات') ||
+              lowerTitle.includes('id for rent') ||
+              lowerTitle.includes('ids for rent') ||
+              lowerTitle.includes('room for rent') ||
+              lowerTitle.includes('bed space') ||
+              lowerTitle.includes('visa for sale') ||
+              lowerTitle.includes('فيزا للبيع') ||
+              lowerTitle.includes('تأشيرات') ||
+              links.some((l) => l.href === href)
             ) {
-              links.push({ title, href });
+              return;
             }
+
+            links.push({ title, href });
           });
         } catch (idxErr: any) {
           logger.warn({ url: listUrl, error: idxErr.message }, 'Failed to load Expatriates city index');
@@ -138,7 +154,7 @@ export class ExpatriatesScraper extends BaseScraper {
           if (postBodyEl.length > 0) {
             postBodyEl.find('a, button, form, .post-actions').remove();
             postBodyEl.find('br').replaceWith('\n');
-            postBodyEl.find('p, div, li').each((_, el) => {
+            postBodyEl.find('p, div, li, h2, h3, h4').each((_, el) => {
               $detail(el).append('\n');
             });
             const rawLines = postBodyEl.text().split('\n').map((l) => l.trim()).filter(Boolean);
