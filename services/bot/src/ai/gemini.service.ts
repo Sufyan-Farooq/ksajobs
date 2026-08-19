@@ -6,6 +6,8 @@ import { logger } from '../scrapers/base.scraper.js';
 export class GeminiJobParser {
   private ai: GoogleGenAI | null = null;
   private primaryModel: string;
+  private lastCallTimestamp: number = 0;
+  private readonly minSpacingMs: number = 4200; // Strict 4.2s spacing to stay <= 14 RPM (beneath 15 RPM limit)
 
   constructor() {
     const apiKey = process.env.GEMINI_API_KEY;
@@ -16,6 +18,19 @@ export class GeminiJobParser {
     } else {
       logger.warn('GEMINI_API_KEY not found in environment variables. Running in heuristic mode.');
     }
+  }
+
+  /**
+   * Enforces strict rate-limit spacing before making an AI request
+   */
+  private async throttle(): Promise<void> {
+    const now = Date.now();
+    const elapsed = now - this.lastCallTimestamp;
+    if (elapsed < this.minSpacingMs) {
+      const waitTime = this.minSpacingMs - elapsed;
+      await new Promise((resolve) => setTimeout(resolve, waitTime));
+    }
+    this.lastCallTimestamp = Date.now();
   }
 
   /**
@@ -67,55 +82,70 @@ Generate strict JSON:
 }
 `;
 
-    try {
-      const response = await this.ai.models.generateContent({
-        model: this.primaryModel,
-        contents: prompt,
-        config: {
-          systemInstruction: KSA_JOB_EXTRACTION_SYSTEM_PROMPT,
-          responseMimeType: 'application/json',
-        },
-      });
+    // Attempt AI call with built-in throttler & retry on 429
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        await this.throttle();
 
-      const rawText = response.text?.trim() || '{}';
-      const cleanedJson = this.sanitizeJsonString(rawText);
-      const parsed = JSON.parse(cleanedJson);
+        const response = await this.ai.models.generateContent({
+          model: this.primaryModel,
+          contents: prompt,
+          config: {
+            systemInstruction: KSA_JOB_EXTRACTION_SYSTEM_PROMPT,
+            responseMimeType: 'application/json',
+          },
+        });
 
-      const contactEmail = rawJob.contactEmail || parsed.contactEmail || this.extractEmail(cleanedRawDescription) || null;
-      const contactPhone = rawJob.contactPhone || parsed.contactPhone || this.extractPhone(cleanedRawDescription) || null;
+        const rawText = response.text?.trim() || '{}';
+        const cleanedJson = this.sanitizeJsonString(rawText);
+        const parsed = JSON.parse(cleanedJson);
 
-      return {
-        titleEn: parsed.titleEn || this.translateArabicTerms(rawJob.title),
-        titleAr: parsed.titleAr || rawJob.title,
-        companyName: rawJob.companyName,
-        companyLogo: rawJob.companyLogo,
-        cityEn: parsed.cityEn || this.normalizeCity(rawJob.locationRaw),
-        cityAr: parsed.cityAr || 'السعودية',
-        workType: parsed.workType || 'ONSITE',
-        jobType: parsed.jobType || 'FULL_TIME',
-        saudization: parsed.saudization || 'NOT_SPECIFIED',
-        saudizationLabelAr: parsed.saudizationLabelAr || 'متاح للجميع',
-        salaryMin: parsed.salaryMin || null,
-        salaryMax: parsed.salaryMax || null,
-        salaryCurrency: parsed.salaryCurrency || 'SAR',
-        experienceYearsMin: parsed.experienceYearsMin || null,
-        experienceYearsMax: parsed.experienceYearsMax || null,
-        educationLevel: parsed.educationLevel || undefined,
-        category: parsed.category || 'General',
-        categoryAr: parsed.categoryAr || 'عام',
-        descriptionFormatted: parsed.descriptionFormatted || this.translateArabicTerms(cleanedRawDescription),
-        requirements: Array.isArray(parsed.requirements) ? parsed.requirements : this.extractRequirements(cleanedRawDescription),
-        benefits: Array.isArray(parsed.benefits) ? parsed.benefits : [],
-        skills: Array.isArray(parsed.skills) ? parsed.skills : [],
-        contactEmail,
-        contactPhone,
-        applyUrl: rawJob.applyUrl,
-        whatsappMessageText: parsed.whatsappMessageText || this.generateDefaultWhatsAppText(rawJob, parsed, contactEmail, contactPhone, cleanedRawDescription),
-      };
-    } catch (err: any) {
-      // Quiet fallback on rate limits or API hiccups
-      return this.heuristicFallback({ ...rawJob, descriptionRaw: cleanedRawDescription });
+        const contactEmail = rawJob.contactEmail || parsed.contactEmail || this.extractEmail(cleanedRawDescription) || null;
+        const contactPhone = rawJob.contactPhone || parsed.contactPhone || this.extractPhone(cleanedRawDescription) || null;
+
+        return {
+          titleEn: parsed.titleEn || this.translateArabicTerms(rawJob.title),
+          titleAr: parsed.titleAr || rawJob.title,
+          companyName: rawJob.companyName,
+          companyLogo: rawJob.companyLogo,
+          cityEn: parsed.cityEn || this.normalizeCity(rawJob.locationRaw),
+          cityAr: parsed.cityAr || 'السعودية',
+          workType: parsed.workType || 'ONSITE',
+          jobType: parsed.jobType || 'FULL_TIME',
+          saudization: parsed.saudization || 'NOT_SPECIFIED',
+          saudizationLabelAr: parsed.saudizationLabelAr || 'متاح للجميع',
+          salaryMin: parsed.salaryMin || null,
+          salaryMax: parsed.salaryMax || null,
+          salaryCurrency: parsed.salaryCurrency || 'SAR',
+          experienceYearsMin: parsed.experienceYearsMin || null,
+          experienceYearsMax: parsed.experienceYearsMax || null,
+          educationLevel: parsed.educationLevel || undefined,
+          category: parsed.category || 'General',
+          categoryAr: parsed.categoryAr || 'عام',
+          descriptionFormatted: parsed.descriptionFormatted || this.translateArabicTerms(cleanedRawDescription),
+          requirements: Array.isArray(parsed.requirements) ? parsed.requirements : this.extractRequirements(cleanedRawDescription),
+          benefits: Array.isArray(parsed.benefits) ? parsed.benefits : [],
+          skills: Array.isArray(parsed.skills) ? parsed.skills : [],
+          contactEmail,
+          contactPhone,
+          applyUrl: rawJob.applyUrl,
+          whatsappMessageText: parsed.whatsappMessageText || this.generateDefaultWhatsAppText(rawJob, parsed, contactEmail, contactPhone, cleanedRawDescription),
+        };
+      } catch (err: any) {
+        const isRateLimit = err?.message?.includes('429') || err?.status === 429 || err?.message?.includes('RESOURCE_EXHAUSTED');
+        if (isRateLimit && attempt === 1) {
+          logger.info({ title: rawJob.title }, 'Gemini rate-limited, cooling down for 6s before retry...');
+          await new Promise((r) => setTimeout(r, 6000));
+          continue;
+        }
+
+        // Graceful silent fallback
+        logger.info({ title: rawJob.title }, 'Applied instant authentic translation & template');
+        return this.heuristicFallback({ ...rawJob, descriptionRaw: cleanedRawDescription });
+      }
     }
+
+    return this.heuristicFallback({ ...rawJob, descriptionRaw: cleanedRawDescription });
   }
 
   private cleanWebsiteNoise(text: string): string {
@@ -246,7 +276,7 @@ Generate strict JSON:
       [/الرياض/g, 'Riyadh'],
       [/جدة/g, 'Jeddah'],
       [/الدمام/g, 'Dammam'],
-      [/الخبر(?![a-zA-Z\u0600-\u06FF])/g, 'Al Khobar'], // Match city name only when not part of another word
+      [/الخبر(?![a-zA-Z\u0600-\u06FF])/g, 'Al Khobar'],
       [/مكة/g, 'Mecca'],
       [/المدينة/g, 'Medina'],
       [/المملكة العربية السعودية/g, 'Saudi Arabia'],
