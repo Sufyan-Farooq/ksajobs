@@ -55,7 +55,7 @@ export class WhatsAppBroadcaster {
         auth: state,
         browser: Browsers.windows('Desktop'),
         printQRInTerminal: false,
-        syncFullHistory: false, // Prevents init query timeouts
+        syncFullHistory: false,
         defaultQueryTimeoutMs: 60000,
       });
 
@@ -104,78 +104,60 @@ export class WhatsAppBroadcaster {
   }
 
   /**
-   * Automatically discovers and syncs all joined WhatsApp groups and channels (newsletters)
+   * Automatically discovers and syncs all joined WhatsApp groups and channels
    */
   async syncParticipatingGroupsAndChannels(): Promise<void> {
-    if (!this.socket || !this.isConnected) return;
-
     try {
       logger.info('🔍 Discovering joined WhatsApp groups and channels...');
       
-      // 1. Fetch WhatsApp Groups
-      const groups = await this.socket.groupFetchAllParticipating();
-      const groupList = Object.values(groups);
-
-      for (const group of groupList) {
-        const isChannel = group.id.endsWith('@newsletter');
-        const existing = await prisma.whatsAppGroup.findUnique({ where: { jid: group.id } });
-        if (!existing) {
-          await prisma.whatsAppGroup.create({
-            data: {
-              jid: group.id,
-              name: group.subject,
-              isChannel: isChannel,
-              isActive: false, // DISABLED BY DEFAULT
-            },
-          });
-        } else {
-          await prisma.whatsAppGroup.update({
-            where: { jid: group.id },
-            data: { 
-              name: group.subject,
-              isChannel: isChannel,
-            },
-          });
-        }
+      // 1. Ensure Official KSA Jobs Channel is seeded and available in Channels tab
+      const officialChannelJid = process.env.WHATSAPP_OFFICIAL_CHANNEL_JID || '1203630029VaV5YUCBadmh65NdqH46@newsletter';
+      const existingOfficial = await prisma.whatsAppGroup.findUnique({ where: { jid: officialChannelJid } });
+      if (!existingOfficial) {
+        await prisma.whatsAppGroup.create({
+          data: {
+            jid: officialChannelJid,
+            name: '📢 KSA JOBS Official Channel (WhatsApp Channel)',
+            isChannel: true,
+            isActive: false, // Disabled by default for user safety
+          },
+        });
       }
 
-      // 2. Discover / Sync WhatsApp Channels (Newsletters)
-      try {
-        const defaultChannelInvite = '0029VaV5YUCBadmh65NdqH46';
-        if (typeof (this.socket as any).newsletterMetadata === 'function') {
-          const channelMeta = await (this.socket as any).newsletterMetadata('invite', defaultChannelInvite);
-          if (channelMeta && channelMeta.id) {
-            const channelJid = channelMeta.id;
-            const channelName = channelMeta.name || 'KSA JOBS Official Channel';
+      // 2. Fetch all participating multi-user WhatsApp Groups
+      if (this.socket && this.isConnected) {
+        const groups = await this.socket.groupFetchAllParticipating().catch(() => ({}));
+        const groupList = Object.values(groups);
 
-            const existingChannel = await prisma.whatsAppGroup.findUnique({ where: { jid: channelJid } });
-            if (!existingChannel) {
-              await prisma.whatsAppGroup.create({
-                data: {
-                  jid: channelJid,
-                  name: `📢 ${channelName}`,
-                  isChannel: true,
-                  isActive: false, // DISABLED BY DEFAULT
-                },
-              });
-              logger.info({ channelJid, channelName }, '✅ Official WhatsApp Channel synced to database');
-            } else {
-              await prisma.whatsAppGroup.update({
-                where: { jid: channelJid },
-                data: { isChannel: true },
-              });
-            }
+        for (const group of groupList) {
+          const isChannel = group.id.endsWith('@newsletter');
+          const existing = await prisma.whatsAppGroup.findUnique({ where: { jid: group.id } });
+          if (!existing) {
+            await prisma.whatsAppGroup.create({
+              data: {
+                jid: group.id,
+                name: group.subject,
+                isChannel: isChannel,
+                isActive: false, // DISABLED BY DEFAULT
+              },
+            });
+          } else {
+            await prisma.whatsAppGroup.update({
+              where: { jid: group.id },
+              data: { 
+                name: group.subject,
+                isChannel: isChannel,
+              },
+            });
           }
         }
-      } catch (channelErr: any) {
-        logger.info({ info: channelErr.message }, 'WhatsApp Channel invite query note');
       }
 
       const totalCount = await prisma.whatsAppGroup.count();
       const channelCount = await prisma.whatsAppGroup.count({ where: { isChannel: true } });
       const groupCount = await prisma.whatsAppGroup.count({ where: { isChannel: false } });
 
-      logger.info({ totalCount, groupCount, channelCount }, '✅ Synced WhatsApp groups & channels to database (All disabled by default)');
+      logger.info({ totalCount, groupCount, channelCount }, '✅ Synced WhatsApp groups & channels to database');
     } catch (err: any) {
       logger.warn({ error: err.message }, 'Could not fetch participating groups');
     }
@@ -202,7 +184,6 @@ export class WhatsAppBroadcaster {
       if (!item) break;
 
       try {
-        // Find all active groups / channels matching city or category filters
         const targetGroups = await prisma.whatsAppGroup.findMany({
           where: {
             isActive: true,
