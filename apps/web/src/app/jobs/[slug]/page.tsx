@@ -6,17 +6,20 @@ import {
   MapPin,
   Calendar,
   Briefcase,
-  Banknote,
-  Share2,
   ExternalLink,
   Mail,
   Phone,
   CheckCircle2,
   ArrowLeft,
   ShieldCheck,
+  Share2,
 } from 'lucide-react';
-import { jobRepository } from '@ksajobs/database';
+import { prisma } from '@ksajobs/database';
 import type { Metadata } from 'next';
+import WhatsAppCopyBox from '../../../components/WhatsAppCopyBox';
+
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 export async function generateMetadata({
   params,
@@ -24,7 +27,7 @@ export async function generateMetadata({
   params: Promise<{ slug: string }>;
 }): Promise<Metadata> {
   const { slug } = await params;
-  const job = await jobRepository.findBySlug(slug);
+  const job = await prisma.job.findUnique({ where: { slug } });
 
   if (!job) {
     return { title: 'Job Not Found | KSA Jobs' };
@@ -50,7 +53,7 @@ export default async function JobDetailPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const job = await jobRepository.findBySlug(slug);
+  const job = await prisma.job.findUnique({ where: { slug } });
 
   if (!job) {
     return notFound();
@@ -102,18 +105,18 @@ export default async function JobDetailPage({
         : undefined,
   };
 
-  const whatsappShareUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(
-    job.whatsappMessageText ||
-      `📢 ${job.titleEn || job.titleAr} at ${job.companyName} (${job.cityEn})\n🔗 Apply here: https://ksajobs.app/jobs/${job.slug}`
-  )}`;
+  const saudizationBadge =
+    job.saudization === 'SAUDI_ONLY'
+      ? 'Saudi Only 🇸🇦'
+      : job.saudization === 'EXPATS_ALLOWED'
+      ? 'Expats / All 🌍'
+      : job.saudization === 'SAUDIS_PREFERRED'
+      ? 'Saudis Preferred 🇸🇦'
+      : 'Open to All 🌍';
 
-  const isSaudiOnly = job.saudization === 'SAUDI_ONLY';
-  const isExpats = job.saudization === 'EXPATS_ALLOWED';
-  const saudizationBadge = isSaudiOnly
-    ? 'Saudi Nationals Only 🇸🇦'
-    : isExpats
-    ? 'Open to All Nationalities 🌐'
-    : 'Open / Not Specified';
+  const whatsappShareUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(
+    `Check out this job opportunity in Saudi Arabia: *${job.titleEn || job.titleAr}* at ${job.companyName} (${job.cityEn})\n\nView details: https://ksajobs.org/jobs/${job.slug}`
+  )}`;
 
   return (
     <>
@@ -156,6 +159,11 @@ export default async function JobDetailPage({
                   <span className="text-[11px] uppercase font-bold text-slate-400">
                     Source: {job.sourcePlatform}
                   </span>
+                  {job.status === 'PENDING_APPROVAL' && (
+                    <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800">
+                      Pending Moderation
+                    </span>
+                  )}
                 </div>
 
                 <h1 className="text-xl sm:text-3xl font-black text-slate-900 leading-tight">
@@ -187,7 +195,7 @@ export default async function JobDetailPage({
                 rel="noopener noreferrer"
                 className="flex items-center justify-center gap-2 px-6 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm shadow-md shadow-emerald-600/20 transition-all hover:scale-[1.02] text-center"
               >
-                <span>Apply for this Job</span>
+                <span>Apply on {job.sourcePlatform}</span>
                 <ExternalLink className="w-4 h-4" />
               </a>
 
@@ -234,11 +242,17 @@ export default async function JobDetailPage({
 
         {/* Content Body */}
         <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 shadow-sm space-y-8">
-          {/* Formatted Description */}
+          
+          {/* WhatsApp Formatted Message Box */}
+          {job.whatsappMessageText && (
+            <WhatsAppCopyBox text={job.whatsappMessageText} />
+          )}
+
+          {/* Formatted Overview */}
           <div>
             <h2 className="text-lg font-bold text-slate-900 mb-3 flex items-center gap-2">
               <Briefcase className="w-5 h-5 text-emerald-600" />
-              <span>Job Overview</span>
+              <span>Full Job Description</span>
             </h2>
             <div className="text-sm text-slate-700 leading-relaxed whitespace-pre-line bg-slate-50/70 p-5 rounded-2xl border border-slate-100">
               {job.descriptionFormatted || job.descriptionRaw}
@@ -310,7 +324,7 @@ export default async function JobDetailPage({
                   </a>
                 )}
                 {job.contactPhone && (
-                  <a href={`tel:${job.contactPhone}`} className="flex items-center gap-1.5 hover:underline font-semibold font-mono">
+                  <a href={`https://wa.me/${job.contactPhone.replace(/[^0-9]/g, '')}`} target="_blank" className="flex items-center gap-1.5 hover:underline font-semibold font-mono">
                     <Phone className="w-4 h-4 text-emerald-600" />
                     <span>{job.contactPhone}</span>
                   </a>

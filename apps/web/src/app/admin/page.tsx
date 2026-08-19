@@ -10,9 +10,9 @@ import {
   Send,
   MessageSquare,
   Sparkles,
-  ExternalLink,
 } from 'lucide-react';
 import Link from 'next/link';
+import AdminJobModerationCard from '../../components/AdminJobModerationCard';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -35,7 +35,7 @@ export default async function AdminDashboardPage() {
       prisma.job.findMany({
         where: { status: 'PENDING_APPROVAL' },
         orderBy: { createdAt: 'desc' },
-        take: 50,
+        take: 60,
       }),
     ]);
 
@@ -55,7 +55,7 @@ export default async function AdminDashboardPage() {
           </div>
           <div>
             <h1 className="text-xl font-bold text-slate-900">Admin &amp; Moderation Dashboard</h1>
-            <p className="text-xs text-slate-500">Manage scraped jobs, approvals, and WhatsApp group broadcasts</p>
+            <p className="text-xs text-slate-500">Live review, full WhatsApp broadcast messages, and distribution controls</p>
           </div>
         </div>
 
@@ -104,72 +104,26 @@ export default async function AdminDashboardPage() {
         </div>
       </div>
 
-      {/* Pending Approval Table */}
-      <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="p-5 border-b border-slate-100 flex items-center justify-between">
-          <div className="flex items-center gap-2 font-bold text-slate-800 text-sm">
-            <Clock className="w-4 h-4 text-amber-500" />
+      {/* Pending Moderation Queue with Full Message Previews */}
+      <div className="space-y-4">
+        <div className="flex items-center justify-between px-2">
+          <div className="flex items-center gap-2 font-black text-slate-900 text-base">
+            <Clock className="w-5 h-5 text-amber-500" />
             <span>Pending Moderation Queue ({pendingJobs.length})</span>
           </div>
-          <span className="text-xs text-slate-400">You can also approve directly via Discord Bot action buttons</span>
+          <span className="text-xs text-slate-400">Click any card to expand full WhatsApp message &amp; details</span>
         </div>
 
         {pendingJobs.length === 0 ? (
-          <div className="p-12 text-center text-slate-500 space-y-2">
+          <div className="bg-white rounded-3xl border border-slate-200 p-12 text-center text-slate-500 space-y-2 shadow-sm">
             <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto" />
             <p className="font-bold text-slate-800">No pending jobs in queue!</p>
-            <p className="text-xs">All scraped jobs have been moderated, or the next scrape run is pending.</p>
+            <p className="text-xs text-slate-400">All scraped jobs have been moderated, or the next scrape run is pending.</p>
           </div>
         ) : (
-          <div className="divide-y divide-slate-100">
+          <div className="space-y-4">
             {pendingJobs.map((job) => (
-              <div key={job.id} className="p-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 hover:bg-slate-50/80 transition-colors">
-                <div className="space-y-1 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold px-2 py-0.5 rounded bg-amber-100 text-amber-800">
-                      Pending Review
-                    </span>
-                    <span className="text-xs text-slate-400 font-medium uppercase">
-                      Source: {job.sourcePlatform}
-                    </span>
-                    <span className="text-xs text-slate-400">
-                      • {job.cityEn || 'Saudi Arabia'}
-                    </span>
-                  </div>
-                  <h3 className="font-bold text-slate-900 text-base">{job.titleEn || job.titleAr}</h3>
-                  <p className="text-xs text-slate-500">Company: {job.companyName}</p>
-                </div>
-
-                <div className="flex items-center gap-2 w-full md:w-auto">
-                  <Link
-                    href={`/jobs/${job.slug}`}
-                    target="_blank"
-                    className="px-3 py-2 rounded-xl border border-slate-200 text-xs font-medium hover:bg-slate-100 text-slate-700"
-                  >
-                    Preview
-                  </Link>
-
-                  <form action={`/api/jobs/approve?id=${job.id}&action=approve`} method="POST">
-                    <button
-                      type="submit"
-                      className="flex items-center gap-1 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm transition-all cursor-pointer"
-                    >
-                      <CheckCircle2 className="w-3.5 h-3.5" />
-                      <span>Approve &amp; Broadcast</span>
-                    </button>
-                  </form>
-
-                  <form action={`/api/jobs/approve?id=${job.id}&action=reject`} method="POST">
-                    <button
-                      type="submit"
-                      className="p-2 rounded-xl border border-rose-200 text-rose-600 hover:bg-rose-50 text-xs font-medium transition-all cursor-pointer"
-                      title="Reject"
-                    >
-                      <XCircle className="w-4 h-4" />
-                    </button>
-                  </form>
-                </div>
-              </div>
+              <AdminJobModerationCard key={job.id} job={job} />
             ))}
           </div>
         )}
