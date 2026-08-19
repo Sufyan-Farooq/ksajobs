@@ -34,7 +34,7 @@ export class GeminiJobParser {
   }
 
   /**
-   * Cleans, translates (Arabic -> English), and organizes authentic employer details
+   * Cleans, translates (Arabic -> English), and concisely summarizes for WhatsApp
    */
   async parse(rawJob: RawScrapedJob): Promise<ParsedJobData> {
     const cleanedRawDescription = this.cleanWebsiteNoise(rawJob.descriptionRaw);
@@ -44,7 +44,7 @@ export class GeminiJobParser {
     }
 
     const prompt = `
-Translate (if in Arabic) and organize this job posting cleanly into English using ONLY the details listed in the post:
+Translate (if in Arabic) and CONCISELY SUMMARIZE this job posting into professional English for WhatsApp:
 
 TITLE: ${rawJob.title}
 COMPANY: ${rawJob.companyName}
@@ -74,11 +74,11 @@ Generate strict JSON:
   "educationLevel": "Bachelor / Diploma / High School / etc.",
   "category": "General / Engineering / IT / Sales / Healthcare / Logistics / Hospitality",
   "categoryAr": "عام / هندسة / تقنية المعلومات / مبيعات / رعاية صحية / لوجستيات / ضيافة",
-  "descriptionFormatted": "The organized English post description (translated from Arabic if original was Arabic)",
+  "descriptionFormatted": "Concise summary of the job in English (overview + key duties + requirements)",
   "requirements": ["Exact requirement 1 in English", "Exact requirement 2 in English"],
   "benefits": ["Benefit 1 in English"],
   "skills": ["Skill 1 in English"],
-  "whatsappMessageText": "The complete English WhatsApp formatted post with organized translated authentic details, WhatsApp contact info (no calling mentioned), and signature"
+  "whatsappMessageText": "The concise English WhatsApp formatted post under 150 words with organized highlights, WhatsApp contact info, and signature"
 }
 `;
 
@@ -122,7 +122,7 @@ Generate strict JSON:
           educationLevel: parsed.educationLevel || undefined,
           category: parsed.category || 'General',
           categoryAr: parsed.categoryAr || 'عام',
-          descriptionFormatted: parsed.descriptionFormatted || this.translateArabicTerms(cleanedRawDescription),
+          descriptionFormatted: parsed.descriptionFormatted || this.summarizeConcise(cleanedRawDescription),
           requirements: Array.isArray(parsed.requirements) ? parsed.requirements : this.extractRequirements(cleanedRawDescription),
           benefits: Array.isArray(parsed.benefits) ? parsed.benefits : [],
           skills: Array.isArray(parsed.skills) ? parsed.skills : [],
@@ -140,7 +140,7 @@ Generate strict JSON:
         }
 
         // Graceful silent fallback
-        logger.info({ title: rawJob.title }, 'Applied instant authentic translation & template');
+        logger.info({ title: rawJob.title }, 'Applied instant concise translation & template');
         return this.heuristicFallback({ ...rawJob, descriptionRaw: cleanedRawDescription });
       }
     }
@@ -170,6 +170,13 @@ Generate strict JSON:
       /Start Hiring/gi,
       /Show Arabic translation/gi,
       /Show English translation/gi,
+      /Attach a Cover Letter/gi,
+      /Send Me Similar Jobs/gi,
+      /Follow This Company/gi,
+      /Unfollow This Company/gi,
+      /Complete Questionnaire/gi,
+      /This job post has been translated by AI[\s\S]*?errors\./gi,
+      /Print/gi,
       /Calculating Freight Shipping Rates/gi,
       /Expat Relocation Services/gi,
       /Expat Resources/gi,
@@ -196,11 +203,48 @@ Generate strict JSON:
       cleaned = cleaned.replace(pattern, '');
     }
 
-    return cleaned
-      .split('\n')
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0 && !l.startsWith('Jobs') && l !== 'jobs')
-      .join('\n');
+    // Deduplicate repetitive lines
+    const seen = new Set<string>();
+    const lines = cleaned.split('\n').map((l) => l.trim()).filter((l) => l.length > 0 && !l.startsWith('Jobs') && l !== 'jobs');
+    const unique: string[] = [];
+
+    for (const l of lines) {
+      if (!seen.has(l)) {
+        seen.add(l);
+        unique.push(l);
+      }
+    }
+
+    return unique.join('\n');
+  }
+
+  private summarizeConcise(text: string): string {
+    const translated = this.translateArabicTerms(text);
+    const lines = translated.split('\n').map((l) => l.trim()).filter(Boolean);
+    
+    // If text is already short, return it
+    if (lines.length <= 10) return lines.join('\n');
+
+    // Extract core sections concisely (overview, responsibilities, requirements)
+    const conciseLines: string[] = [];
+    let count = 0;
+
+    for (const line of lines) {
+      if (count > 12) break;
+      // Skip redundant boilerplate
+      if (
+        line.startsWith('Initiative by') ||
+        line.startsWith('Channel Link') ||
+        line.startsWith('Group Link') ||
+        line.includes('http')
+      ) {
+        continue;
+      }
+      conciseLines.push(line);
+      count++;
+    }
+
+    return conciseLines.join('\n');
   }
 
   private translateArabicTerms(text: string): string {
@@ -212,11 +256,13 @@ Generate strict JSON:
     const dictionary: [RegExp, string][] = [
       [/المسؤوليات الأساسية:/g, 'Key Responsibilities: / Accountabilities:'],
       [/المسؤوليات الرئيسية:/g, 'Main Responsibilities:'],
+      [/المهام والمسؤوليات:/g, 'Key Tasks & Responsibilities:'],
+      [/هدف الوظيفة:|هدف الJob \/ Position::/g, 'Job Purpose / Objective:'],
       [/التعليم والخبرة المطلوبة:/g, 'Required Education and Experience:'],
       [/التعليم والخبرة:/g, 'Education and Experience:'],
       [/الخبرة المطلوبة:/g, 'Required Experience:'],
       [/المهارات المطلوبة:/g, 'Required Skills:'],
-      [/المؤهلات المطلوبة:/g, 'Required Qualifications:'],
+      [/المؤهلات المطلوبة:|المؤهلات المطلوبة/g, 'Required Qualifications:'],
       [/الشروط المطلوبة:/g, 'Required Conditions:'],
       [/طبيعة العمل:/g, 'Job Nature:'],
       [/التخصص:/g, 'Specialty:'],
@@ -366,14 +412,13 @@ Generate strict JSON:
     }
     applyLines.push(`🔗 Apply Link:\n${raw.applyUrl}`);
 
-    const rawTextToTranslate = (cleanedBody || raw.descriptionRaw).trim();
-    const bodyText = this.translateArabicTerms(rawTextToTranslate);
+    const conciseBody = this.summarizeConcise(cleanedBody || raw.descriptionRaw);
 
     return `📢 ${title}
 
 📍 Location: ${city}, Saudi Arabia
 
-${bodyText}
+${conciseBody}
 
 ${applyLines.join('\n\n')}
 
@@ -385,7 +430,7 @@ ${KSA_JOBS_SIGNATURE}`;
     const contactEmail = rawJob.contactEmail || this.extractEmail(rawJob.descriptionRaw) || null;
     const contactPhone = rawJob.contactPhone || this.extractPhone(rawJob.descriptionRaw) || null;
     const titleEn = this.translateArabicTerms(rawJob.title);
-    const descriptionFormatted = this.translateArabicTerms(rawJob.descriptionRaw);
+    const descriptionFormatted = this.summarizeConcise(rawJob.descriptionRaw);
 
     return {
       titleEn,

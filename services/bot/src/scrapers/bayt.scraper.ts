@@ -8,7 +8,7 @@ export class BaytScraper extends BaseScraper {
   readonly platform: SourcePlatform = 'bayt';
 
   /**
-   * Scrapes Bayt.com KSA genuine job vacancies with full description & candidate profile
+   * Scrapes Bayt.com KSA genuine job vacancies with short clean URLs and concise descriptions
    */
   async scrape(maxJobs: number = 10): Promise<RawScrapedJob[]> {
     const jobs: RawScrapedJob[] = [];
@@ -43,7 +43,7 @@ export class BaytScraper extends BaseScraper {
       const html = await indexPage.content();
       const $ = cheerio.load(html);
 
-      const listingLinks: { title: string; href: string }[] = [];
+      const listingLinks: { title: string; href: string; jobId: string }[] = [];
 
       // Extract genuine job vacancy cards only
       $('a[data-js-view="search-job-title"], h2.h5 a, li[data-js-job] a[href*="/jobs/"]').each((_, el) => {
@@ -71,10 +71,10 @@ export class BaytScraper extends BaseScraper {
           return;
         }
 
-        // Genuine Bayt job URLs usually contain a numerical ID e.g. -5444639/ or /job/
-        const isJobUrl = /\d+\/?$/.test(href) || href.includes('/job/');
-        if (isJobUrl && !listingLinks.some((l) => l.href === href)) {
-          listingLinks.push({ title, href });
+        // Extract numerical Job ID from URL
+        const idMatch = href.match(/(\d+)\/?$/);
+        if (idMatch && !listingLinks.some((l) => l.jobId === idMatch[1])) {
+          listingLinks.push({ title, href, jobId: idMatch[1] });
         }
       });
 
@@ -84,8 +84,9 @@ export class BaytScraper extends BaseScraper {
       for (const item of listingLinks) {
         if (jobs.length >= maxJobs) break;
 
+        // Clean short URL without long percent-encoded Arabic strings
+        const cleanShortUrl = `https://www.bayt.com/en/saudi-arabia/jobs/job-${item.jobId}/`;
         const rawUrl = item.href.startsWith('http') ? item.href : `https://www.bayt.com${item.href}`;
-        const cleanUrl = rawUrl.replace('https://www.bayt.com/ar/', 'https://www.bayt.com/en/').split('?')[0];
 
         try {
           const detailCtx = await browser.newContext({
@@ -98,20 +99,20 @@ export class BaytScraper extends BaseScraper {
           });
 
           const page = await detailCtx.newPage();
-          await page.goto(cleanUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+          await page.goto(cleanShortUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
           await page.waitForTimeout(2500);
 
           const fullHtml = await page.content();
           await detailCtx.close();
 
           const $detail = cheerio.load(fullHtml);
-          $detail('script, style, iframe, header, footer, nav, .cookie-banner, .similar-jobs, #similar_jobs').remove();
+          $detail('script, style, iframe, header, footer, nav, .cookie-banner, .similar-jobs, #similar_jobs, form, button, [class*="action"], [class*="widget"]').remove();
 
           const pageTitle = $detail('h1').text().trim() || item.title;
-          const company = this.cleanText($detail('.t-company, .company, [data-js-view="company-name"]').text()) || 'Saudi Employer';
+          const company = this.cleanText($detail('.t-company, .company, [data-js-view="company-name"]').first().text()) || 'Saudi Employer';
           
           let location = 'Saudi Arabia';
-          const locText = $detail('.t-location, [data-js-view="job-location"], .t-break').text();
+          const locText = $detail('.t-location, [data-js-view="job-location"], .t-break').first().text();
           if (locText.includes('Riyadh')) location = 'Riyadh, Saudi Arabia';
           else if (locText.includes('Jeddah')) location = 'Jeddah, Saudi Arabia';
           else if (locText.includes('Dammam')) location = 'Dammam, Saudi Arabia';
@@ -119,54 +120,71 @@ export class BaytScraper extends BaseScraper {
           else if (locText.includes('Mecca') || locText.includes('Makkah')) location = 'Mecca, Saudi Arabia';
           else if (locText.includes('Medina') || locText.includes('Madinah')) location = 'Medina, Saudi Arabia';
 
-          // Extract job description and candidate requirements
-          const descEl = $detail('[data-js-view="job-description"], .t-break, #job_desc, .card-content');
+          // Extract single primary job description container (prevent duplicate concatenation)
+          let descEl = $detail('[data-js-view="job-description"], #job_desc');
+          if (descEl.length === 0) {
+            descEl = $detail('.card-content, .t-break').first();
+          }
+
           descEl.find('br').replaceWith('\n');
           descEl.find('p, div, li, h2, h3, h4, h5').each((_, el) => {
             $detail(el).append('\n');
           });
 
-          let fullDescription = descEl.text()
-            .split('\n')
-            .map((l) => l.trim())
-            .filter((l) => {
-              if (!l) return false;
-              if (l.includes('Apply now') || l.includes('Email to Friend') || l.includes('Report this job') || l.includes('Promote your job')) return false;
-              if (l.includes('Are you looking for') || l.includes('Similar jobs')) return false;
-              return true;
-            })
-            .join('\n');
+          // Deduplicate consecutive identical lines
+          const seenLines = new Set<string>();
+          const rawLines = descEl.text().split('\n').map((l) => l.trim()).filter(Boolean);
+          const uniqueLines: string[] = [];
 
-          // Clean Bayt noise
-          fullDescription = fullDescription
-            .replace(/Report\s*this\s*job/gi, '')
-            .replace(/Promote\s*your\s*job/gi, '')
-            .replace(/Email\s*to\s*Friend/gi, '')
-            .trim();
+          for (const line of rawLines) {
+            if (
+              line.includes('Apply now') ||
+              line.includes('Email to Friend') ||
+              line.includes('Report this job') ||
+              line.includes('Promote your job') ||
+              line.includes('Are you looking for') ||
+              line.includes('Similar jobs') ||
+              line.includes('Attach a Cover Letter') ||
+              line.includes('Send Me Similar Jobs') ||
+              line.includes('Follow This Company') ||
+              line.includes('Unfollow This Company') ||
+              line.includes('Complete Questionnaire') ||
+              line.includes('Print') ||
+              line.includes('translated by AI')
+            ) {
+              continue;
+            }
 
+            if (!seenLines.has(line)) {
+              seenLines.add(line);
+              uniqueLines.push(line);
+            }
+          }
+
+          let fullDescription = uniqueLines.join('\n').trim();
           if (!fullDescription || fullDescription.length < 30) {
             fullDescription = `${pageTitle} at ${company} in ${location}.`;
           }
 
           // Strict Geolocation check
-          if (!isStrictlyInSaudiArabia({ url: cleanUrl, location, title: pageTitle, description: fullDescription })) {
+          if (!isStrictlyInSaudiArabia({ url: cleanShortUrl, location, title: pageTitle, description: fullDescription })) {
             logger.warn({ title: pageTitle, location }, 'Skipping foreign non-KSA Bayt post');
             continue;
           }
 
           jobs.push({
             sourcePlatform: 'bayt',
-            sourceUrl: cleanUrl,
+            sourceUrl: cleanShortUrl,
             title: pageTitle,
             companyName: company,
             locationRaw: location,
             descriptionRaw: fullDescription,
-            applyUrl: cleanUrl,
+            applyUrl: cleanShortUrl,
           });
 
           await this.sleep(400, 800);
         } catch (detailErr: any) {
-          logger.info({ url: cleanUrl }, 'Could not load Bayt detail page, skipping');
+          logger.info({ url: cleanShortUrl }, 'Could not load Bayt detail page, skipping');
         }
       }
     } catch (err: any) {
