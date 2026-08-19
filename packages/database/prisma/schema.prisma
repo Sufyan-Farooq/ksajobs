@@ -1,0 +1,134 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Job {
+  id                    String        @id @default(cuid())
+  slug                  String        @unique
+  titleEn               String
+  titleAr               String?
+  companyName           String
+  companyLogo           String?
+  cityEn                String        // Riyadh, Jeddah, Dammam, etc.
+  cityAr                String?       // الرياض، جدة، الدمام
+  workType              String        @default("ONSITE") // ONSITE, REMOTE, HYBRID
+  jobType               String        @default("FULL_TIME") // FULL_TIME, PART_TIME, CONTRACT, INTERNSHIP
+  saudization           String        @default("NOT_SPECIFIED") // SAUDI_ONLY, EXPATS_ALLOWED, SAUDIS_PREFERRED, NOT_SPECIFIED
+  saudizationLabelAr    String?
+  
+  // Salary & Requirements
+  salaryMin             Int?
+  salaryMax             Int?
+  salaryCurrency        String        @default("SAR")
+  experienceYearsMin    Int?
+  experienceYearsMax    Int?
+  educationLevel        String?
+  
+  // AI Extracted Content
+  category              String        @default("General") // IT, Engineering, Healthcare, Sales, etc.
+  categoryAr            String?
+  descriptionRaw        String
+  descriptionFormatted  String
+  requirements          String        @default("[]") // JSON stringified array
+  benefits              String        @default("[]") // JSON stringified array
+  skills                String        @default("[]") // JSON stringified array
+  
+  // Application details
+  sourcePlatform        String        // linkedin, bayt, tanqeeb, expatriates, mourjan, manual
+  sourceUrl             String        @unique
+  sourceJobId           String?
+  contactEmail          String?
+  contactPhone          String?
+  applyUrl              String
+  
+  // WhatsApp formatted post
+  whatsappMessageText   String
+  
+  // Workflow & Moderation
+  status                String        @default("PENDING_APPROVAL") // PENDING_APPROVAL, APPROVED, REJECTED, EXPIRED
+  discordMessageId      String?
+  approvedBy            String?
+  approvedAt            DateTime?
+  rejectionReason       String?
+  
+  // Engagement
+  viewsCount            Int           @default(0)
+  clicksCount           Int           @default(0)
+  
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+  expiresAt             DateTime?
+
+  broadcastLogs         BroadcastLog[]
+
+  @@index([status, createdAt])
+  @@index([cityEn, category])
+  @@index([saudization])
+}
+
+model Candidate {
+  id                String   @id @default(cuid())
+  name              String
+  email             String
+  phone             String?
+  city              String   @default("Riyadh")
+  nationality       String?
+  currentRole       String
+  experienceYears   Int?
+  education         String?
+  skills            String   @default("[]") // JSON stringified array of skills
+  summary           String
+  resumeFileName    String?
+  resumeUrl         String?
+  safetyScanStatus  String   @default("CLEAN") // CLEAN, PENDING_SCAN, FLAGGED
+  safetyScanDetails String?
+  status            String   @default("ACTIVE") // ACTIVE, HIRED, ARCHIVED
+  source            String   @default("gmail_cv") // gmail_cv, direct_upload
+  emailSubject      String?
+  emailSender       String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([city, currentRole])
+  @@index([safetyScanStatus])
+}
+
+model WhatsAppGroup {
+  id             String         @id @default(cuid())
+  name           String
+  jid            String         @unique
+  cityFilter     String?
+  categoryFilter String?
+  isActive       Boolean        @default(false) // Disabled by default!
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  broadcastLogs  BroadcastLog[]
+}
+
+model BroadcastLog {
+  id             String         @id @default(cuid())
+  jobId          String
+  job            Job            @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  groupId        String
+  group          WhatsAppGroup  @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  status         String         // SUCCESS, FAILED
+  error          String?
+  sentAt         DateTime       @default(now())
+}
+
+model ScraperRunLog {
+  id             String         @id @default(cuid())
+  platform       String
+  jobsFound      Int            @default(0)
+  jobsInserted   Int            @default(0)
+  jobsDuplicates Int            @default(0)
+  errors         String?
+  startedAt      DateTime       @default(now())
+  completedAt    DateTime?
+}

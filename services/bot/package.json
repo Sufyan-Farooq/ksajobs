@@ -1,0 +1,49 @@
+{
+  "name": "@ksajobs/bot",
+  "version": "1.0.0",
+  "private": true,
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "test:linkedin": "tsx src/cli/test-scraper.ts --platform linkedin",
+    "test:bayt": "tsx src/cli/test-scraper.ts --platform bayt",
+    "test:tanqeeb": "tsx src/cli/test-scraper.ts --platform tanqeeb",
+    "test:expatriates": "tsx src/cli/test-scraper.ts --platform expatriates",
+    "test:all": "tsx src/cli/test-scraper.ts --platform all",
+    "scan:gmail": "tsx src/cli/scan-gmail.ts",
+    "scan:gmail:all": "tsx src/cli/scan-gmail.ts --all",
+    "login:whatsapp": "tsx src/cli/login-whatsapp.ts",
+    "qr": "tsx src/cli/login-whatsapp.ts"
+  },
+  "dependencies": {
+    "@google/genai": "^2.17.1",
+    "@ksajobs/database": "workspace:*",
+    "@ksajobs/types": "workspace:*",
+    "@whiskeysockets/baileys": "^6.7.9",
+    "axios": "^1.7.9",
+    "cheerio": "^1.0.0",
+    "discord.js": "^14.17.3",
+    "dotenv": "^16.4.7",
+    "imapflow": "^1.7.1",
+    "mailparser": "^3.9.15",
+    "node-cron": "^3.0.3",
+    "pdf-parse": "^2.4.5",
+    "pino": "^9.6.0",
+    "pino-pretty": "^13.0.0",
+    "playwright": "^1.50.1",
+    "qrcode": "^1.5.4",
+    "qrcode-terminal": "^0.12.0"
+  },
+  "devDependencies": {
+    "@types/mailparser": "^3.4.6",
+    "@types/node": "^22.13.4",
+    "@types/node-cron": "^3.0.11",
+    "@types/pdf-parse": "^1.1.5",
+    "@types/qrcode": "^1.5.6",
+    "@types/qrcode-terminal": "^0.12.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}

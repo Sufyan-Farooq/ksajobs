@@ -1,0 +1,50 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Next.js
+.next/
+out/
+
+# TypeScript & Build outputs
+dist/
+build/
+*.tsbuildinfo
+
+# Environment variables & secrets
+.env
+.env*.local
+.env.production
+.env.staging
+packages/database/.env
+services/bot/.env
+apps/web/.env
+
+# WhatsApp Auth Sessions & Caches
+.wwebjs_auth/
+whatsapp_auth/
+.wwebjs_cache/
+whatsapp_session/
+services/bot/sessions/
+sessions/
+
+# Uploaded Resumes / Resumes Storage
+services/web/public/uploads/
+apps/web/public/uploads/
+public/uploads/
+uploads/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# Temporary verification dumps & scratch files
+VERIFICATION_JOBS_DUMP.json
+VERIFICATION_JOBS_DUMP.md

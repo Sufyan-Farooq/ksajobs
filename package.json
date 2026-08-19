@@ -1,0 +1,23 @@
+{
+  "name": "ksajobs-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "pnpm --filter @ksajobs/bot start",
+    "start:bot": "pnpm --filter @ksajobs/bot start",
+    "start:web": "pnpm --filter @ksajobs/web start",
+    "dev": "pnpm --filter @ksajobs/bot dev",
+    "dev:web": "pnpm --filter @ksajobs/web dev",
+    "dev:bot": "pnpm --filter @ksajobs/bot dev",
+    "build": "pnpm --recursive run build",
+    "db:generate": "pnpm --filter @ksajobs/database generate",
+    "db:push": "pnpm --filter @ksajobs/database push",
+    "scan:gmail": "pnpm --filter @ksajobs/bot scan:gmail",
+    "scan:gmail:all": "pnpm --filter @ksajobs/bot scan:gmail:all",
+    "login:whatsapp": "pnpm --filter @ksajobs/bot login:whatsapp",
+    "qr": "pnpm --filter @ksajobs/bot qr"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "name": "@ksajobs/database",
+  "version": "1.0.0",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "generate": "prisma generate",
+    "push": "prisma db push",
+    "seed": "node dist/seed.js"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.4.1",
+    "@ksajobs/types": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "prisma": "^6.4.1",
+    "typescript": "^5.7.3"
+  }
+}
