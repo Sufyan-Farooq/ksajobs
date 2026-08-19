@@ -2,6 +2,7 @@ import { BaseScraper, logger } from './base.scraper.js';
 import type { RawScrapedJob, SourcePlatform } from '@ksajobs/types';
 import { chromium } from 'playwright';
 import * as cheerio from 'cheerio';
+import { isStrictlyInSaudiArabia } from '../utils/geo-validator.js';
 
 export class TanqeebScraper extends BaseScraper {
   readonly platform: SourcePlatform = 'tanqeeb';
@@ -65,7 +66,6 @@ export class TanqeebScraper extends BaseScraper {
         }
 
         const fullUrl = href.startsWith('http') ? href : `https://saudi.tanqeeb.com${href}`;
-        // Ensure English URL
         const cleanUrl = fullUrl.replace('https://saudi.tanqeeb.com/ar/', 'https://saudi.tanqeeb.com/en/').split('?')[0];
 
         if (!links.some((l) => l.href === cleanUrl)) {
@@ -155,16 +155,9 @@ export class TanqeebScraper extends BaseScraper {
             }
           }
 
-          // Filter out foreign non-Saudi postings (e.g. Missouri, USA)
-          const lowerDesc = finalDescription.toLowerCase();
-          if (
-            (lowerDesc.includes('missouri') || lowerDesc.includes('united states') || lowerDesc.includes('401(k)')) &&
-            lowerDesc.includes('$') &&
-            !lowerDesc.includes('riyadh') &&
-            !lowerDesc.includes('jeddah') &&
-            !lowerDesc.includes('dammam')
-          ) {
-            logger.info({ title: pageTitle }, 'Skipping foreign non-Saudi job posting indexed on Tanqeeb');
+          // Strict Geolocation check
+          if (!isStrictlyInSaudiArabia({ url: item.href, location, title: pageTitle, description: finalDescription })) {
+            logger.warn({ title: pageTitle, location }, 'Skipping foreign non-KSA Tanqeeb post');
             continue;
           }
 

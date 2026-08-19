@@ -4,6 +4,7 @@ import { DiscordModerationBot, PlatformCycleStats } from './discord/discord.bot.
 import { WhatsAppBroadcaster } from './whatsapp/whatsapp.service.js';
 import { jobRepository, prisma } from '@ksajobs/database';
 import { logger } from './scrapers/base.scraper.js';
+import { isStrictlyInSaudiArabia } from './utils/geo-validator.js';
 import type { SourcePlatform } from '@ksajobs/types';
 
 export class IngestionPipeline {
@@ -57,7 +58,18 @@ export class IngestionPipeline {
         totalFound += found;
 
         for (const raw of rawJobs) {
-          // 1. Deduplication check
+          // 1. Strict Centralized Geolocation Filter (rejects foreign jobs from Korea, US, UK, etc.)
+          if (!isStrictlyInSaudiArabia({
+            url: raw.sourceUrl,
+            location: raw.locationRaw,
+            title: raw.title,
+            description: raw.descriptionRaw,
+          })) {
+            logger.warn({ title: raw.title, location: raw.locationRaw, url: raw.sourceUrl }, '🛡️ Central Gatekeeper discarded foreign non-KSA job');
+            continue;
+          }
+
+          // 2. Deduplication check
           const exists = await jobRepository.existsBySourceUrl(raw.sourceUrl);
           if (exists) {
             duplicates++;
@@ -65,11 +77,11 @@ export class IngestionPipeline {
             continue;
           }
 
-          // 2. AI Parse & Enrich with graceful rate-limit delay
+          // 3. AI Parse & Enrich with graceful rate-limit delay
           logger.info({ title: raw.title, platform: raw.sourcePlatform }, 'Enriching job with AI...');
           const parsed = await this.parser.parse(raw);
 
-          // 3. Save to database as PENDING_APPROVAL
+          // 4. Save to database as PENDING_APPROVAL
           const jobRecord = await jobRepository.createPendingJob(raw, parsed);
           inserted++;
           totalInserted++;
@@ -83,13 +95,13 @@ export class IngestionPipeline {
             });
           }
 
-          // 4. Send to Discord #jobs-pending approval queue
+          // 5. Send to Discord #jobs-pending approval queue
           const discordMsgId = await this.discordBot.postPendingJob(jobRecord.id, parsed, raw);
           if (discordMsgId) {
             await jobRepository.setDiscordMessageId(jobRecord.id, discordMsgId);
           }
 
-          // Gentle throttling between AI calls to stay gracefully below rate limits
+          // Gentle throttling between AI calls
           await new Promise((r) => setTimeout(r, 1200));
         }
 

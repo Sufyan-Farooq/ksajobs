@@ -2,6 +2,7 @@ import { BaseScraper, logger } from './base.scraper.js';
 import type { RawScrapedJob, SourcePlatform } from '@ksajobs/types';
 import { chromium } from 'playwright';
 import * as cheerio from 'cheerio';
+import { isStrictlyInSaudiArabia } from '../utils/geo-validator.js';
 
 export class BaytScraper extends BaseScraper {
   readonly platform: SourcePlatform = 'bayt';
@@ -145,6 +146,12 @@ export class BaytScraper extends BaseScraper {
 
           if (!fullDescription || fullDescription.length < 30) {
             fullDescription = `${pageTitle} at ${company} in ${location}.`;
+          }
+
+          // Strict Geolocation check
+          if (!isStrictlyInSaudiArabia({ url: cleanUrl, location, title: pageTitle, description: fullDescription })) {
+            logger.warn({ title: pageTitle, location }, 'Skipping foreign non-KSA Bayt post');
+            continue;
           }
 
           jobs.push({

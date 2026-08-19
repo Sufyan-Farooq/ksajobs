@@ -2,6 +2,7 @@ import { BaseScraper, logger } from './base.scraper.js';
 import type { RawScrapedJob, SourcePlatform } from '@ksajobs/types';
 import { chromium } from 'playwright';
 import * as cheerio from 'cheerio';
+import { isStrictlyInSaudiArabia } from '../utils/geo-validator.js';
 
 export class LinkedInScraper extends BaseScraper {
   readonly platform: SourcePlatform = 'linkedin';
@@ -60,7 +61,7 @@ export class LinkedInScraper extends BaseScraper {
         const time = card.find('time').attr('datetime') || card.find('time').text().trim();
 
         // Skip generic badge titles or non-job cards
-        const lowerTitle = title.toLowerCase();
+        const lowerTitle = (title || '').toLowerCase();
         if (
           !title ||
           !link ||
@@ -72,6 +73,11 @@ export class LinkedInScraper extends BaseScraper {
           lowerTitle === 'hybrid' ||
           title.length < 4
         ) {
+          return;
+        }
+
+        // Strict Geolocation check on card URL and Location
+        if (!isStrictlyInSaudiArabia({ url: link, location, title })) {
           return;
         }
 
@@ -109,7 +115,7 @@ export class LinkedInScraper extends BaseScraper {
 
           const topLocation = this.cleanText($detail('.top-card-layout__first-subline .topcard__flavor:nth-child(2), .topcard__flavor--bullet').text());
           if (topLocation) {
-            location = topLocation.includes('Saudi') ? topLocation : `${topLocation}, Saudi Arabia`;
+            location = topLocation;
           }
 
           const descEl = $detail('.show-more-less-html__markup, .description__text, section.show-more-less-html');
@@ -143,6 +149,12 @@ export class LinkedInScraper extends BaseScraper {
           }
         } catch (detailErr: any) {
           logger.info({ url: cleanUrl }, 'Using fallback listing card details for LinkedIn post');
+        }
+
+        // Strict Geolocation Verification on Full Detail
+        if (!isStrictlyInSaudiArabia({ url: cleanUrl, location, title: pageTitle, description: fullDescription })) {
+          logger.warn({ title: pageTitle, location, url: cleanUrl }, 'Skipping foreign non-KSA LinkedIn post');
+          continue;
         }
 
         jobs.push({
