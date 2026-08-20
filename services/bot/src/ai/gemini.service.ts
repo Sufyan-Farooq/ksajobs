@@ -222,29 +222,30 @@ Generate strict JSON:
     const translated = this.translateArabicTerms(text);
     const lines = translated.split('\n').map((l) => l.trim()).filter(Boolean);
     
-    // If text is already short, return it
-    if (lines.length <= 10) return lines.join('\n');
+    if (lines.length <= 6) return lines.join('\n');
 
-    // Extract core sections concisely (overview, responsibilities, requirements)
-    const conciseLines: string[] = [];
-    let count = 0;
+    // Filter out boilerplate and company PR essays
+    const usefulLines: string[] = [];
+    let charCount = 0;
 
     for (const line of lines) {
-      if (count > 12) break;
-      // Skip redundant boilerplate
+      if (charCount > 650) break;
       if (
         line.startsWith('Initiative by') ||
         line.startsWith('Channel Link') ||
         line.startsWith('Group Link') ||
-        line.includes('http')
+        line.includes('http') ||
+        line.includes('Be the change') ||
+        line.includes('visionary developer')
       ) {
         continue;
       }
-      conciseLines.push(line);
-      count++;
+
+      usefulLines.push(line);
+      charCount += line.length;
     }
 
-    return conciseLines.join('\n');
+    return usefulLines.slice(0, 8).join('\n');
   }
 
   private translateArabicTerms(text: string): string {

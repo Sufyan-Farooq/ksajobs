@@ -8,11 +8,11 @@ export class LinkedInScraper extends BaseScraper {
   readonly platform: SourcePlatform = 'linkedin';
 
   /**
-   * Scrapes genuine LinkedIn KSA jobs with full description extraction
+   * Scrapes genuine LinkedIn KSA jobs using official Saudi Arabia geoId 100459316
    */
   async scrape(maxJobs: number = 10): Promise<RawScrapedJob[]> {
     const jobs: RawScrapedJob[] = [];
-    const url = 'https://www.linkedin.com/jobs/search?location=Saudi%20Arabia&geoId=105149562&f_TPR=r86400&position=1&pageNum=0';
+    const url = 'https://www.linkedin.com/jobs/search?location=Saudi%20Arabia&geoId=100459316&f_TPR=r86400&position=1&pageNum=0';
 
     logger.info({ platform: this.platform, maxJobs }, 'Starting LinkedIn KSA browser scraper with full detail extraction...');
 
@@ -86,7 +86,7 @@ export class LinkedInScraper extends BaseScraper {
         }
       });
 
-      logger.info({ count: cards.length }, 'Found LinkedIn listing cards on page');
+      logger.info({ count: cards.length }, 'Found genuine LinkedIn KSA listing cards');
 
       for (const card of cards) {
         if (jobs.length >= maxJobs) break;

@@ -12,7 +12,7 @@ export class TanqeebScraper extends BaseScraper {
    */
   async scrape(maxJobs: number = 10): Promise<RawScrapedJob[]> {
     const jobs: RawScrapedJob[] = [];
-    const url = 'https://saudi.tanqeeb.com/en/jobs-in-saudi/all/jobs/0.html';
+    const url = 'https://saudi.tanqeeb.com/en';
 
     logger.info({ platform: this.platform, maxJobs }, 'Starting Tanqeeb KSA browser scraper...');
 
@@ -45,22 +45,28 @@ export class TanqeebScraper extends BaseScraper {
 
       const links: { title: string; href: string }[] = [];
 
-      // Extract listing links from cards
-      $('a[href*="/jobs/"]').each((_, el) => {
-        const href = $(el).attr('href');
+      // Extract genuine job vacancy links (must end in .html with numeric job ID)
+      $('a[href*="/jobs-in-saudi/all/jobs/"], a[href*="/jobs/"]').each((_, el) => {
+        const href = $(el).attr('href') || '';
         const title = this.cleanText($(el).text());
 
+        // Skip non-job navigation links
         if (
           !href ||
           !title ||
           title.length < 5 ||
+          !/\d+\.html/.test(href) ||
+          href.includes('/job_list') ||
+          href.includes('/post_job') ||
+          href.includes('/employer') ||
           href.includes('/category/') ||
           href.includes('/country/') ||
           href.includes('/city/') ||
           href.includes('/roles/') ||
           title.includes('Find Related Jobs') ||
           title.includes('Discover More') ||
-          title.includes('Looking to Hire')
+          title.includes('Looking to Hire') ||
+          title.includes('Employer')
         ) {
           return;
         }
@@ -74,7 +80,7 @@ export class TanqeebScraper extends BaseScraper {
       });
 
       await indexCtx.close();
-      logger.info({ count: links.length }, 'Found Tanqeeb listings on page');
+      logger.info({ count: links.length }, 'Found genuine Tanqeeb KSA job vacancies');
 
       for (const item of links) {
         if (jobs.length >= maxJobs) break;

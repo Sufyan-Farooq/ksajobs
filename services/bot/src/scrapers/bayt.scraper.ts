@@ -86,7 +86,6 @@ export class BaytScraper extends BaseScraper {
 
         // Clean short URL without long percent-encoded Arabic strings
         const cleanShortUrl = `https://www.bayt.com/en/saudi-arabia/jobs/job-${item.jobId}/`;
-        const rawUrl = item.href.startsWith('http') ? item.href : `https://www.bayt.com${item.href}`;
 
         try {
           const detailCtx = await browser.newContext({
@@ -120,54 +119,59 @@ export class BaytScraper extends BaseScraper {
           else if (locText.includes('Mecca') || locText.includes('Makkah')) location = 'Mecca, Saudi Arabia';
           else if (locText.includes('Medina') || locText.includes('Madinah')) location = 'Medina, Saudi Arabia';
 
-          // Extract single primary job description container (prevent duplicate concatenation)
-          let descEl = $detail('[data-js-view="job-description"], #job_desc');
-          if (descEl.length === 0) {
-            descEl = $detail('.card-content, .t-break').first();
-          }
+          // Extract richest description container
+          let bestDesc = '';
+          let maxLen = 0;
 
-          descEl.find('br').replaceWith('\n');
-          descEl.find('p, div, li, h2, h3, h4, h5').each((_, el) => {
-            $detail(el).append('\n');
+          $detail('[data-js-view="job-description"], #job_desc, .card-content, .card-body, .is-break-word').each((_, el) => {
+            const container = $detail(el);
+            container.find('br').replaceWith('\n');
+            container.find('p, div, li, h2, h3, h4, h5').each((_, node) => {
+              $detail(node).append('\n');
+            });
+
+            const seenLines = new Set<string>();
+            const rawLines = container.text().split('\n').map((l) => l.trim()).filter(Boolean);
+            const uniqueLines: string[] = [];
+
+            for (const line of rawLines) {
+              if (
+                line.includes('Apply now') ||
+                line.includes('Email to Friend') ||
+                line.includes('Report this job') ||
+                line.includes('Promote your job') ||
+                line.includes('Are you looking for') ||
+                line.includes('Similar jobs') ||
+                line.includes('Attach a Cover Letter') ||
+                line.includes('Send Me Similar Jobs') ||
+                line.includes('Follow This Company') ||
+                line.includes('Unfollow This Company') ||
+                line.includes('Complete Questionnaire') ||
+                line.includes('Print') ||
+                line.includes('translated by AI')
+              ) {
+                continue;
+              }
+
+              if (!seenLines.has(line)) {
+                seenLines.add(line);
+                uniqueLines.push(line);
+              }
+            }
+
+            const candidateText = uniqueLines.join('\n').trim();
+            if (candidateText.length > maxLen) {
+              maxLen = candidateText.length;
+              bestDesc = candidateText;
+            }
           });
 
-          // Deduplicate consecutive identical lines
-          const seenLines = new Set<string>();
-          const rawLines = descEl.text().split('\n').map((l) => l.trim()).filter(Boolean);
-          const uniqueLines: string[] = [];
-
-          for (const line of rawLines) {
-            if (
-              line.includes('Apply now') ||
-              line.includes('Email to Friend') ||
-              line.includes('Report this job') ||
-              line.includes('Promote your job') ||
-              line.includes('Are you looking for') ||
-              line.includes('Similar jobs') ||
-              line.includes('Attach a Cover Letter') ||
-              line.includes('Send Me Similar Jobs') ||
-              line.includes('Follow This Company') ||
-              line.includes('Unfollow This Company') ||
-              line.includes('Complete Questionnaire') ||
-              line.includes('Print') ||
-              line.includes('translated by AI')
-            ) {
-              continue;
-            }
-
-            if (!seenLines.has(line)) {
-              seenLines.add(line);
-              uniqueLines.push(line);
-            }
-          }
-
-          let fullDescription = uniqueLines.join('\n').trim();
-          if (!fullDescription || fullDescription.length < 30) {
-            fullDescription = `${pageTitle} at ${company} in ${location}.`;
+          if (!bestDesc || bestDesc.length < 30) {
+            bestDesc = `${pageTitle} at ${company} in ${location}.`;
           }
 
           // Strict Geolocation check
-          if (!isStrictlyInSaudiArabia({ url: cleanShortUrl, location, title: pageTitle, description: fullDescription })) {
+          if (!isStrictlyInSaudiArabia({ url: cleanShortUrl, location, title: pageTitle, description: bestDesc })) {
             logger.warn({ title: pageTitle, location }, 'Skipping foreign non-KSA Bayt post');
             continue;
           }
@@ -178,7 +182,7 @@ export class BaytScraper extends BaseScraper {
             title: pageTitle,
             companyName: company,
             locationRaw: location,
-            descriptionRaw: fullDescription,
+            descriptionRaw: bestDesc,
             applyUrl: cleanShortUrl,
           });
 
